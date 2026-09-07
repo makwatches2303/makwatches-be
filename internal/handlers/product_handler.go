@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imageurl"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
 
@@ -21,13 +25,74 @@ import (
 type ProductHandler struct {
 	DB     *database.DBClient
 	Config *config.Config
+	// Firebase is the shared Storage provider used by the admin create/update
+	// paths. It is lazily initialized, so a deployment without credentials
+	// still serves the read-only catalog.
+	Firebase *firebase.Provider
+	// Media verifies that a resolved image reference exists in the bucket.
+	// A nil index reports every object as present.
+	Media *mediaindex.Index
 }
 
 // NewProductHandler creates a new instance of ProductHandler
-func NewProductHandler(db *database.DBClient, cfg *config.Config) *ProductHandler {
+func NewProductHandler(db *database.DBClient, cfg *config.Config, fb *firebase.Provider, media *mediaindex.Index) *ProductHandler {
 	return &ProductHandler{
-		DB:     db,
-		Config: cfg,
+		DB:       db,
+		Config:   cfg,
+		Firebase: fb,
+		Media:    media,
+	}
+}
+
+// resolveProductImages rewrites a product's stored image references to canonical
+// Firebase Storage URLs. Legacy records hold absolute "/uploads/..." URLs built
+// from the API host at upload time; see the imageurl package.
+//
+// References whose object is absent from the bucket are dropped rather than
+// emitted: Cloud Storage answers anonymous requests for a missing object with
+// 403 rather than 404, so serving the URL makes every client retry and fail on
+// it. See the mediaindex package. The index fails open, so this is a no-op when
+// the bucket cannot be listed.
+func (h *ProductHandler) resolveProductImages(ctx context.Context, p *models.Product) {
+	bucket := h.Config.FirebaseBucketName
+	p.ImageURL = imageurl.Resolve(p.ImageURL, bucket)
+	p.Images = imageurl.ResolveAll(p.Images, bucket)
+
+	present := make([]string, 0, len(p.Images))
+	for _, img := range p.Images {
+		if h.Media.Has(ctx, mediaindex.ObjectName(img)) {
+			present = append(present, img)
+		}
+	}
+	p.Images = present
+
+	if p.ImageURL != "" && !h.Media.Has(ctx, mediaindex.ObjectName(p.ImageURL)) {
+		p.ImageURL = ""
+	}
+	if p.ImageURL == "" && len(p.Images) > 0 {
+		p.ImageURL = p.Images[0]
+	}
+}
+
+// presentImages drops references whose object is absent from the bucket.
+//
+// Shared by the reduced-payload public endpoints, which project into their own
+// structs rather than decoding a full models.Product and so cannot use
+// resolveProductImages. Fails open with the index.
+func (h *ProductHandler) presentImages(ctx context.Context, refs []string) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if h.Media.Has(ctx, mediaindex.ObjectName(ref)) {
+			out = append(out, ref)
+		}
+	}
+	return out
+}
+
+// resolveProductListImages applies resolveProductImages across a slice.
+func (h *ProductHandler) resolveProductListImages(ctx context.Context, products []models.Product) {
+	for i := range products {
+		h.resolveProductImages(ctx, &products[i])
 	}
 }
 
@@ -108,6 +173,7 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	err = h.DB.CacheGet(ctx, cacheKey, &products)
 	if err == nil {
 		// Cache hit
+		h.resolveProductListImages(ctx, products)
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"success": true,
 			"message": "Products retrieved from cache",
@@ -152,6 +218,8 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 		})
 	}
 
+	h.resolveProductListImages(ctx, products)
+
 	// Cache the results for future requests (expire after 10 minutes)
 	h.DB.CacheSet(ctx, cacheKey, products, 10*time.Minute)
 
@@ -189,6 +257,7 @@ func (h *ProductHandler) GetProductByID(c *fiber.Ctx) error {
 	err := h.DB.CacheGet(ctx, cacheKey, &product)
 	if err == nil {
 		// Cache hit
+		h.resolveProductImages(ctx, &product)
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"success": true,
 			"message": "Product retrieved from cache",
@@ -221,6 +290,8 @@ func (h *ProductHandler) GetProductByID(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
+
+	h.resolveProductImages(ctx, &product)
 
 	// Cache the product for future requests (expire after 30 minutes)
 	h.DB.CacheSet(ctx, cacheKey, product, 30*time.Minute)
@@ -408,6 +479,11 @@ func (h *ProductHandler) GetPublicProducts(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "Failed to decode products", "error": err.Error()})
 	}
 
+	for i := range items {
+		items[i].Images = h.presentImages(ctx,
+			imageurl.ResolveAll(items[i].Images, h.Config.FirebaseBucketName))
+	}
+
 	return c.JSON(fiber.Map{
 		"success": true,
 		"message": "Products retrieved successfully",
@@ -424,6 +500,7 @@ func (h *ProductHandler) GetPublicProducts(c *fiber.Ctx) error {
 // GetPublicProductByID returns complete product info for storefront
 // GET /catalog/products/:id
 func (h *ProductHandler) GetPublicProductByID(c *fiber.Ctx) error {
+	ctx := c.Context()
 	id := c.Params("id")
 	if id == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Product ID is required"})
@@ -495,6 +572,16 @@ func (h *ProductHandler) GetPublicProductByID(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "Failed to fetch product", "error": err.Error()})
 	}
+	doc.ImageURL = imageurl.Resolve(doc.ImageURL, h.Config.FirebaseBucketName)
+	doc.Images = h.presentImages(ctx,
+		imageurl.ResolveAll(doc.Images, h.Config.FirebaseBucketName))
+	if doc.ImageURL != "" && !h.Media.Has(ctx, mediaindex.ObjectName(doc.ImageURL)) {
+		doc.ImageURL = ""
+	}
+	if doc.ImageURL == "" && len(doc.Images) > 0 {
+		doc.ImageURL = doc.Images[0]
+	}
+
 	return c.JSON(fiber.Map{"success": true, "message": "Product retrieved successfully", "data": doc})
 }
 

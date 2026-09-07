@@ -205,13 +205,21 @@ func (h *CartHandler) AddToCart(c *fiber.Ctx) error {
 func (h *CartHandler) GetCart(c *fiber.Ctx) error {
 	ctx := c.Context()
 
-	// Get user ID from URL parameter or from token
-	userIDParam := c.Params("userID")
-	var userID primitive.ObjectID
-	var err error
+	// The authenticated identity is the source of truth. A :userID in the path
+	// is only ever a redundant restatement of it -- it is never trusted on its
+	// own, or any caller could read any other user's cart.
+	tokenUser, ok := c.Locals("user").(*middleware.TokenMetadata)
+	if !ok || tokenUser == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"message": "Unauthorized - User data not found",
+		})
+	}
 
-	if userIDParam != "" {
-		userID, err = primitive.ObjectIDFromHex(userIDParam)
+	userID := tokenUser.UserID
+
+	if userIDParam := c.Params("userID"); userIDParam != "" {
+		requested, err := primitive.ObjectIDFromHex(userIDParam)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
@@ -219,22 +227,20 @@ func (h *CartHandler) GetCart(c *fiber.Ctx) error {
 				"error":   err.Error(),
 			})
 		}
-	} else {
-		// Get user info from token
-		user, ok := c.Locals("user").(*middleware.TokenMetadata)
-		if !ok || user == nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		// Same rule as RemoveFromCart: own cart, or admin.
+		if requested != tokenUser.UserID && tokenUser.Role != "admin" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"success": false,
-				"message": "Unauthorized - User data not found",
+				"message": "Not authorized to view this cart",
 			})
 		}
-		userID = user.UserID
+		userID = requested
 	}
 
 	// Check if the cart is in Redis cache
 	cacheKey := fmt.Sprintf("cart:%s", userID.Hex())
 	var cartResponse models.CartResponse
-	err = h.DB.CacheGet(ctx, cacheKey, &cartResponse)
+	err := h.DB.CacheGet(ctx, cacheKey, &cartResponse)
 	if err == nil {
 		// Cache hit
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -438,5 +444,126 @@ func (h *CartHandler) RemoveFromCart(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": "Item removed from cart successfully",
+	})
+}
+
+// ReplaceCart replaces the caller's whole cart with the submitted lines.
+//
+// PUT /cart. The storefront keeps a client-side bag so a signed-out visitor can
+// shop; checkout, however, is built entirely from the server cart -- both
+// /checkout and /payments/razorpay/order price the order from it and never
+// trust a client total. This is the endpoint that reconciles the two, so it has
+// to be idempotent: POST /cart adds to the existing quantity, which would
+// double the bag if sync ran twice.
+//
+// A line the server cannot honour is adjusted rather than fatal. One product
+// selling out while it sat in someone's bag must not reject the rest of the
+// cart; the applied quantity and the reason come back so the customer can be
+// told what changed before they pay.
+func (h *CartHandler) ReplaceCart(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	user, ok := c.Locals("user").(*middleware.TokenMetadata)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"message": "Unauthorized - User data not found",
+		})
+	}
+
+	var req models.CartReplaceRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Invalid request body",
+			"error":   err.Error(),
+		})
+	}
+
+	// One query for every product referenced, rather than one per line.
+	products := map[primitive.ObjectID]models.Product{}
+	if ids := models.CartProductIDs(req.Items); len(ids) > 0 {
+		cursor, err := h.DB.Collections().Products.Find(ctx, bson.M{"_id": bson.M{"$in": ids}})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Failed to price the cart",
+				"error":   err.Error(),
+			})
+		}
+		defer cursor.Close(ctx)
+
+		var found []models.Product
+		if err := cursor.All(ctx, &found); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Failed to decode products",
+				"error":   err.Error(),
+			})
+		}
+		for _, product := range found {
+			products[product.ID] = product
+		}
+	}
+
+	plan, adjustments := models.PlanCart(req.Items, products)
+
+	now := time.Now()
+	items := make([]models.CartItem, 0, len(plan))
+	for _, line := range plan {
+		items = append(items, models.CartItem{
+			ID:        primitive.NewObjectID(),
+			UserID:    user.UserID,
+			ProductID: line.ProductID,
+			Size:      line.Size,
+			Quantity:  line.Quantity,
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+
+	cartCollection := h.DB.Collections().CartItems
+	if _, err := cartCollection.DeleteMany(ctx, bson.M{"user_id": user.UserID}); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to clear the existing cart",
+			"error":   err.Error(),
+		})
+	}
+
+	if len(items) > 0 {
+		docs := make([]interface{}, len(items))
+		for i := range items {
+			docs[i] = items[i]
+		}
+		if _, err := cartCollection.InsertMany(ctx, docs); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Failed to store the cart",
+				"error":   err.Error(),
+			})
+		}
+	}
+
+	h.DB.CacheDel(ctx, fmt.Sprintf("cart:%s", user.UserID.Hex()))
+
+	// Return the stored cart priced the way checkout will price it, so the
+	// client can show the real figures instead of its own arithmetic.
+	response := models.CartSyncResponse{
+		Items:       []models.CartItem{},
+		Total:       0,
+		Adjustments: adjustments,
+	}
+	for i := range items {
+		product := products[items[i].ProductID]
+		items[i].Product = &product
+		response.Items = append(response.Items, items[i])
+		response.Total += product.GetFinalPrice() * float64(items[i].Quantity)
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "Cart updated",
+		"data":    response,
 	})
 }

@@ -12,7 +12,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imageurl"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
 
@@ -28,12 +30,13 @@ const (
 
 // HomeContentHandler manages curated landing page data.
 type HomeContentHandler struct {
-	DB *database.DBClient
+	DB     *database.DBClient
+	Config *config.Config
 }
 
 // NewHomeContentHandler wires a handler with the provided DB client.
-func NewHomeContentHandler(db *database.DBClient) *HomeContentHandler {
-	return &HomeContentHandler{DB: db}
+func NewHomeContentHandler(db *database.DBClient, cfg *config.Config) *HomeContentHandler {
+	return &HomeContentHandler{DB: db, Config: cfg}
 }
 
 // GetHomeContent returns aggregated landing page content for the storefront.
@@ -1387,8 +1390,8 @@ func (h *HomeContentHandler) GetHomeContentByProductID(c *fiber.Ctx) error {
 			"category":           product.Category,
 			"mainCategory":       product.MainCategory,
 			"subcategory":        product.Subcategory,
-			"images":             product.Images,
-			"imageUrl":           product.ImageURL,
+			"images":             imageurl.ResolveAll(product.Images, h.Config.FirebaseBucketName),
+			"imageUrl":           imageurl.Resolve(product.ImageURL, h.Config.FirebaseBucketName),
 			"stock":              product.Stock,
 			"gender":             product.Gender,
 			"dialColor":          product.DialColor,

@@ -172,13 +172,16 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create order items and calculate total (authoritative server-side)
+	// Price the order from the catalogue, authoritatively. This pass performs
+	// no writes: stock is only committed once the payment has been verified,
+	// below. Decrementing here and validating afterwards -- as this handler
+	// previously did -- burned inventory on every rejected signature and every
+	// client/server total mismatch, and never restored it.
 	var orderItems []models.OrderItem
 	var total float64
 	productsCollection := h.DB.Collections().Products
 
 	for _, item := range cartItems {
-		// Get product details
 		var product models.Product
 		err := productsCollection.FindOne(ctx, bson.M{"_id": item.ProductID}).Decode(&product)
 		if err != nil {
@@ -189,7 +192,6 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 			})
 		}
 
-		// Check if there's enough stock
 		if product.Stock < item.Quantity {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
@@ -206,7 +208,6 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 			productImage = product.Images[0]
 		}
 
-		// Create order item
 		orderItem := models.OrderItem{
 			ProductID:   product.ID,
 			ProductName: product.Name,
@@ -220,24 +221,6 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 
 		orderItems = append(orderItems, orderItem)
 		total += orderItem.Subtotal
-
-		// Update product stock
-		_, err = productsCollection.UpdateOne(
-			ctx,
-			bson.M{"_id": product.ID},
-			bson.M{"$inc": bson.M{"stock": -item.Quantity}},
-		)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"success": false,
-				"message": "Failed to update product stock",
-				"error":   err.Error(),
-			})
-		}
-
-		// Invalidate product cache
-		productCacheKey := fmt.Sprintf("product:%s", product.ID.Hex())
-		h.DB.CacheDel(ctx, productCacheKey)
 	}
 
 	// Verify Razorpay signature if method is razorpay
@@ -263,6 +246,52 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 				"message": fmt.Sprintf("Total mismatch. Client: %.2f Server: %.2f", clientTotal, total),
 			})
 		}
+	}
+
+	// Commit stock. The guard on the update means a unit sold between pricing
+	// and here loses the race instead of overselling; anything already taken is
+	// handed back before returning.
+	committed := make([]models.OrderItem, 0, len(orderItems))
+	restoreStock := func() {
+		for _, taken := range committed {
+			if _, err := productsCollection.UpdateOne(
+				ctx,
+				bson.M{"_id": taken.ProductID},
+				bson.M{"$inc": bson.M{"stock": taken.Quantity}},
+			); err != nil {
+				// Nothing further can be done automatically; surface it loudly
+				// so the discrepancy can be reconciled.
+				log.Printf("[CHECKOUT] ⚠️ failed to restore %d unit(s) of product %s: %v",
+					taken.Quantity, taken.ProductID.Hex(), err)
+			}
+			h.DB.CacheDel(ctx, fmt.Sprintf("product:%s", taken.ProductID.Hex()))
+		}
+	}
+
+	for _, orderItem := range orderItems {
+		result, err := productsCollection.UpdateOne(
+			ctx,
+			bson.M{"_id": orderItem.ProductID, "stock": bson.M{"$gte": orderItem.Quantity}},
+			bson.M{"$inc": bson.M{"stock": -orderItem.Quantity}},
+		)
+		if err != nil {
+			restoreStock()
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Failed to update product stock",
+				"error":   err.Error(),
+			})
+		}
+		if result.MatchedCount == 0 {
+			restoreStock()
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"success": false,
+				"message": fmt.Sprintf("Not enough stock for product %s", orderItem.ProductName),
+			})
+		}
+
+		committed = append(committed, orderItem)
+		h.DB.CacheDel(ctx, fmt.Sprintf("product:%s", orderItem.ProductID.Hex()))
 	}
 
 	// Determine order and payment statuses
@@ -319,6 +348,9 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 	orderCollection := h.DB.Collections().Orders
 	_, err = orderCollection.InsertOne(ctx, order)
 	if err != nil {
+		// The stock was already taken; without this the units would be lost to
+		// an order that does not exist.
+		restoreStock()
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
 			"message": "Failed to create order",
@@ -640,7 +672,10 @@ func (h *OrderHandler) GetOrders(c *fiber.Ctx) error {
 	}
 
 	// Map orders to convert ObjectID to hex string for frontend
-	var respOrders []OrderResponse
+	// Initialised rather than declared nil: Go marshals a nil slice as JSON
+	// `null`, and a client that reads the list would get null instead of an
+	// empty array for a customer who has not ordered yet.
+	respOrders := []OrderResponse{}
 	for _, o := range orders {
 		payStatus := o.PaymentStatus
 		if payStatus == "" {
@@ -1094,7 +1129,10 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	userCollection := h.DB.Collections().Users
 	// Cache userId to name to avoid duplicate DB calls
 	userNameCache := make(map[string]string)
-	var respOrders []OrderResponse
+	// Initialised rather than declared nil: Go marshals a nil slice as JSON
+	// `null`, and a client that reads the list would get null instead of an
+	// empty array for a customer who has not ordered yet.
+	respOrders := []OrderResponse{}
 	for _, o := range orders {
 		payStatus := o.PaymentStatus
 		if payStatus == "" {

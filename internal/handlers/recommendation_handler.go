@@ -12,6 +12,7 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imageurl"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
@@ -136,7 +137,7 @@ func (h *RecommendationHandler) GetRecommendations(c *fiber.Ctx) error {
 				}
 
 				// Build response
-				recommendations := buildRecommendationsResponse(products)
+				recommendations := buildRecommendationsResponse(products, h.Config.FirebaseBucketName)
 
 				// Cache the results
 				h.DB.CacheSet(ctx, cacheKey, recommendations, 30*60) // 30 minutes
@@ -201,7 +202,7 @@ func (h *RecommendationHandler) GetRecommendations(c *fiber.Ctx) error {
 	}
 
 	// Build response
-	recommendations := buildRecommendationsResponse(products)
+	recommendations := buildRecommendationsResponse(products, h.Config.FirebaseBucketName)
 
 	// Cache the results
 	h.DB.CacheSet(ctx, cacheKey, recommendations, 30*60) // 30 minutes
@@ -299,14 +300,18 @@ func (h *RecommendationHandler) SubmitFeedback(c *fiber.Ctx) error {
 }
 
 // Helper function to build recommendation response
-func buildRecommendationsResponse(products []models.Product) []fiber.Map {
+func buildRecommendationsResponse(products []models.Product, bucket string) []fiber.Map {
 	recommendations := make([]fiber.Map, 0, len(products))
 	for _, product := range products {
+		image := imageurl.Resolve(product.ImageURL, bucket)
+		if image == "" && len(product.Images) > 0 {
+			image = imageurl.Resolve(product.Images[0], bucket)
+		}
 		recommendations = append(recommendations, fiber.Map{
 			"id":          product.ID,
 			"name":        product.Name,
 			"price":       product.Price,
-			"image":       product.ImageURL,
+			"image":       image,
 			"description": product.Description,
 			"category":    product.Category,
 			"inStock":     product.Stock > 0,

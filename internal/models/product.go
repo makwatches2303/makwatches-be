@@ -33,8 +33,82 @@ type Product struct {
 	DiscountAmount     *float64   `json:"discountAmount,omitempty" bson:"discount_amount,omitempty"`         // Fixed amount discount
 	DiscountStartDate  *time.Time `json:"discountStartDate,omitempty" bson:"discount_start_date,omitempty"`  // When discount starts
 	DiscountEndDate    *time.Time `json:"discountEndDate,omitempty" bson:"discount_end_date,omitempty"`      // When discount ends
-	CreatedAt          time.Time  `json:"createdAt" bson:"created_at"`
-	UpdatedAt          time.Time  `json:"updatedAt" bson:"updated_at"`
+
+	// ── Reconstruction fields (Phase 1) ─────────────────────────────────────
+	// Every field below is additive and optional. Existing records predate them
+	// and decode with zero values; `omitempty` keeps them out of both the BSON
+	// written back and the JSON sent to clients, so an un-migrated product is
+	// indistinguishable from its former self on the wire. Nothing here is ever
+	// populated with a fabricated value -- an unknown specification stays unset
+	// so the storefront renders nothing rather than inventing a claim.
+
+	Slug             string     `json:"slug,omitempty" bson:"slug,omitempty"`                          // URL identity for /product/[slug]
+	SKU              string     `json:"sku,omitempty" bson:"sku,omitempty"`                            // Merchant stock-keeping unit
+	Collection       string     `json:"collection,omitempty" bson:"collection,omitempty"`              // Editorial grouping, distinct from Category
+	CompareAtPrice   *float64   `json:"compareAtPrice,omitempty" bson:"compare_at_price,omitempty"`    // Struck-through reference price
+	ShortDescription string     `json:"shortDescription,omitempty" bson:"short_description,omitempty"` // One-line summary for cards
+	Media            []MediaRef `json:"media,omitempty" bson:"media,omitempty"`                        // Structured media, superseding Images[]
+	Specs            *Specs     `json:"specs,omitempty" bson:"specs,omitempty"`                        // Watch specifications
+	Status           string     `json:"status,omitempty" bson:"status,omitempty"`                      // ProductStatus*; empty is treated as published
+	Featured         bool       `json:"featured,omitempty" bson:"featured,omitempty"`                  // Homepage feature flag
+	NewArrival       bool       `json:"newArrival,omitempty" bson:"new_arrival,omitempty"`             // New-arrival flag
+	Bestseller       bool       `json:"bestseller,omitempty" bson:"bestseller,omitempty"`              // Bestseller flag
+	SEO              *SEO       `json:"seo,omitempty" bson:"seo,omitempty"`                            // Per-product metadata overrides
+
+	CreatedAt time.Time `json:"createdAt" bson:"created_at"`
+	UpdatedAt time.Time `json:"updatedAt" bson:"updated_at"`
+}
+
+// Product publication states. An empty Status means the record predates this
+// field, and is treated as published so existing catalog behaviour is unchanged.
+const (
+	ProductStatusDraft     = "draft"
+	ProductStatusPublished = "published"
+	ProductStatusArchived  = "archived"
+)
+
+// IsPublished reports whether the product should be visible on the storefront.
+func (p *Product) IsPublished() bool {
+	return p.Status == "" || p.Status == ProductStatusPublished
+}
+
+// MediaRef is a structured reference to a stored asset.
+//
+// It carries the storage object key rather than only a resolved URL, so the
+// storage backend can change without rewriting records. URL remains present for
+// records written before this model existed and for direct rendering.
+type MediaRef struct {
+	URL    string `json:"url" bson:"url"`                         // Canonical public URL
+	Key    string `json:"key,omitempty" bson:"key,omitempty"`     // Storage object name within the bucket
+	Alt    string `json:"alt,omitempty" bson:"alt,omitempty"`     // Accessible description
+	Kind   string `json:"kind,omitempty" bson:"kind,omitempty"`   // "image" | "video"; empty means image
+	Width  int    `json:"width,omitempty" bson:"width,omitempty"` // Intrinsic size, when known
+	Height int    `json:"height,omitempty" bson:"height,omitempty"`
+}
+
+// Specs holds watch specifications.
+//
+// Every field is a pointer: nil means "not recorded", which is deliberately
+// distinct from an empty string. The storefront omits nil fields entirely
+// rather than rendering a blank row or a placeholder value.
+type Specs struct {
+	Movement        *string  `json:"movement,omitempty" bson:"movement,omitempty"`
+	Case            *string  `json:"case,omitempty" bson:"case,omitempty"`
+	Crystal         *string  `json:"crystal,omitempty" bson:"crystal,omitempty"`
+	Dial            *string  `json:"dial,omitempty" bson:"dial,omitempty"`
+	Strap           *string  `json:"strap,omitempty" bson:"strap,omitempty"`
+	WaterResistance *string  `json:"waterResistance,omitempty" bson:"water_resistance,omitempty"`
+	Dimensions      *string  `json:"dimensions,omitempty" bson:"dimensions,omitempty"`
+	Warranty        *string  `json:"warranty,omitempty" bson:"warranty,omitempty"`
+	BoxContents     []string `json:"boxContents,omitempty" bson:"box_contents,omitempty"`
+}
+
+// SEO holds per-product metadata overrides. Anything unset falls back to the
+// product's own name and description at render time.
+type SEO struct {
+	Title       string `json:"title,omitempty" bson:"title,omitempty"`
+	Description string `json:"description,omitempty" bson:"description,omitempty"`
+	OGImage     string `json:"ogImage,omitempty" bson:"og_image,omitempty"`
 }
 
 // IsDiscountActive checks if the product has an active discount

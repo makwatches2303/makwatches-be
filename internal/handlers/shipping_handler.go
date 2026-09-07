@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -280,11 +281,20 @@ func (h *ShippingHandler) CheckPincode(c *fiber.Ctx) error {
 
 	serviceability, err := h.DelhiveryService.CheckPincodeServiceability(pincode)
 	if err != nil {
+		// "We could not check" is not "we do not deliver here". Collapsing the
+		// two told customers at serviceable addresses that we do not ship to
+		// them whenever our carrier credentials failed.
+		if errors.Is(err, services.ErrCarrierUnavailable) {
+			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+				"success": false,
+				"message": "We could not check delivery for this pincode right now.",
+				"error":   err.Error(),
+			})
+		}
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success":     false,
 			"serviceable": false,
 			"message":     "Pincode not serviceable",
-			"error":       err.Error(),
 		})
 	}
 

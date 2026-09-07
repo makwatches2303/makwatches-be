@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 
-	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
 
@@ -26,19 +24,18 @@ func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
 	var product models.Product
 	uploadedImages := []string{}
 
-	// Initialize Firebase client early so we can upload files if present.
-	fbClient, err := firebase.NewFirebaseClient(ctx, h.Config.FirebaseCredentialsJSON, h.Config.FirebaseBucketName)
-	useLocalFallback := false
+	// Resolve the shared Firebase client so we can upload files if present.
+	// Product images always go to Firebase Storage. The previous
+	// development-only local fallback persisted request-host URLs
+	// (c.BaseURL()+"/uploads/...") into the database, which is what left the
+	// catalog pointing at a domain that never served the files.
+	fbClient, err := h.Firebase.Client(ctx)
 	if err != nil {
-		if h.Config.Environment == "development" || h.Config.Environment == "dev" || h.Config.Environment == "local" {
-			useLocalFallback = true
-		} else {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"success": false,
-				"message": "Failed to initialize Firebase client",
-				"error":   err.Error(),
-			})
-		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to initialize Firebase client",
+			"error":   err.Error(),
+		})
 	}
 
 	// If this is a multipart form, try to read files first so we don't lose the stream when parsing body
@@ -50,26 +47,7 @@ func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
 		}
 		if len(files) > 0 {
 			for _, fh := range files {
-				if useLocalFallback {
-					if err := os.MkdirAll("uploads", 0o755); err != nil {
-						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-							"success": false,
-							"message": "Failed to prepare uploads directory",
-							"error":   err.Error(),
-						})
-					}
-					unique := fmt.Sprintf("%d-%s", time.Now().UnixNano(), fh.Filename)
-					destPath := filepath.Join("uploads", unique)
-					if err := c.SaveFile(fh, destPath); err != nil {
-						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-							"success": false,
-							"message": "Failed to save image",
-							"error":   err.Error(),
-						})
-					}
-					imageURL := c.BaseURL() + "/uploads/" + unique
-					uploadedImages = append(uploadedImages, imageURL)
-				} else {
+				{
 					fileReader, err := fh.Open()
 					if err != nil {
 						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -230,19 +208,18 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 	var updatedProduct models.Product
 	uploadedImages := []string{}
 
-	// Initialize Firebase client for uploads (with development fallback)
-	fbClient, err := firebase.NewFirebaseClient(ctx, h.Config.FirebaseCredentialsJSON, h.Config.FirebaseBucketName)
-	useLocalFallback := false
+	// Resolve the shared Firebase client for uploads.
+	// Product images always go to Firebase Storage. The previous
+	// development-only local fallback persisted request-host URLs
+	// (c.BaseURL()+"/uploads/...") into the database, which is what left the
+	// catalog pointing at a domain that never served the files.
+	fbClient, err := h.Firebase.Client(ctx)
 	if err != nil {
-		if h.Config.Environment == "development" || h.Config.Environment == "dev" || h.Config.Environment == "local" {
-			useLocalFallback = true
-		} else {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"success": false,
-				"message": "Failed to initialize Firebase client",
-				"error":   err.Error(),
-			})
-		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to initialize Firebase client",
+			"error":   err.Error(),
+		})
 	}
 
 	// Parse multipart uploads first so body parsing can still work
@@ -253,26 +230,7 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 		}
 		if len(files) > 0 {
 			for _, fh := range files {
-				if useLocalFallback {
-					if err := os.MkdirAll("uploads", 0o755); err != nil {
-						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-							"success": false,
-							"message": "Failed to prepare uploads directory",
-							"error":   err.Error(),
-						})
-					}
-					unique := fmt.Sprintf("%d-%s", time.Now().UnixNano(), fh.Filename)
-					destPath := filepath.Join("uploads", unique)
-					if err := c.SaveFile(fh, destPath); err != nil {
-						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-							"success": false,
-							"message": "Failed to save image",
-							"error":   err.Error(),
-						})
-					}
-					imageURL := c.BaseURL() + "/uploads/" + unique
-					uploadedImages = append(uploadedImages, imageURL)
-				} else {
+				{
 					fileReader, err := fh.Open()
 					if err != nil {
 						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

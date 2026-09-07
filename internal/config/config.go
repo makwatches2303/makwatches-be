@@ -30,11 +30,6 @@ type Config struct {
 	RazorpayKey           string
 	RazorpaySecret        string
 	RazorpayWebhookSecret string
-	// AWS S3 settings
-	AWSS3AccessKey  string
-	AWSS3SecretKey  string
-	AWSS3Region     string
-	AWSS3BucketName string
 	// Google OAuth settings
 	GoogleClientID     string
 	GoogleClientSecret string
@@ -92,11 +87,6 @@ func LoadConfig() (*Config, error) {
 			return getEnv("RAZORPAY_KEY_SECRET", "")
 		}(),
 		RazorpayWebhookSecret: getEnv("RAZORPAY_WEBHOOK_SECRET", ""),
-		// AWS S3 config
-		AWSS3AccessKey:  getEnv("AWS_S3_ACCESS_KEY", ""),
-		AWSS3SecretKey:  getEnv("AWS_S3_SECRET_KEY", ""),
-		AWSS3Region:     getEnv("AWS_S3_REGION", "ap-south-1"),
-		AWSS3BucketName: getEnv("AWS_S3_BUCKET_NAME", "pehnaw"),
 		// Google OAuth config
 		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),

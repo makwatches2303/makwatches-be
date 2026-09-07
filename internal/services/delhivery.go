@@ -3,11 +3,13 @@ package services
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -455,6 +457,17 @@ func (s *DelhiveryService) TrackShipment(waybill string) (*TrackingStatus, error
 }
 
 // PincodeServiceability represents pincode check response
+// Distinguishing "the carrier says no" from "we could not ask" matters at
+// checkout: telling a customer we do not deliver to them, when the truth is
+// that our carrier credentials failed, loses the order for no reason.
+var (
+	// ErrCarrierUnavailable: the carrier could not be reached, rejected our
+	// credentials, or answered with something we could not read.
+	ErrCarrierUnavailable = errors.New("carrier unavailable")
+	// ErrPincodeNotServiceable: the carrier answered, and the answer is no.
+	ErrPincodeNotServiceable = errors.New("pincode not serviceable")
+)
+
 type PincodeServiceability struct {
 	Pincode        string `json:"pincode"`
 	District       string `json:"district"`
@@ -488,61 +501,77 @@ func (s *DelhiveryService) CheckPincodeServiceability(pincode string) (*PincodeS
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check pincode: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrCarrierUnavailable, err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read pincode response: %w", err)
+		return nil, fmt.Errorf("%w: %v", ErrCarrierUnavailable, err)
 	}
 
+	// A non-2xx answer means we failed to *ask*, not that the pincode is
+	// unserviceable. The two were indistinguishable before: an expired token
+	// returns an error body that parses into zero delivery codes, so every
+	// address in the country was reported as undeliverable.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: carrier returned %d: %s",
+			ErrCarrierUnavailable, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Mirrors the carrier's actual shape: each delivery_codes entry wraps a
+	// `postal_code` *object*. The previous struct expected those fields flat on
+	// the entry, so unmarshalling always failed -- and because the failure was
+	// reported as "not serviceable", every address in the country looked
+	// undeliverable. max_amount/max_weight are decimals, not integers.
 	var pincodeResp struct {
 		DeliveryCode []struct {
-			PostalCode     string `json:"postal_code"`
-			District       string `json:"district"`
-			City           string `json:"city"`
-			State          string `json:"state"`
-			CountryCode    string `json:"country_code"`
-			Pin            int    `json:"pin"`
-			PrePaid        string `json:"pre_paid"` // "Y" or "N"
-			Cash           string `json:"cash"`     // "Y" or "N"
-			Pickup         string `json:"pickup"`   // "Y" or "N"
-			Cod            string `json:"cod"`      // "Y" or "N"
-			ODA            string `json:"ODA"`      // "Y" or "N"
-			SortCode       string `json:"sort_code"`
-			MaxWeight      int    `json:"max_weight"`
-			MaxAmount      int    `json:"max_amount"`
-			StateCode      string `json:"state_code"`
-			Remarks        string `json:"remarks"`
-			IncomingCenter string `json:"incoming_center"`
+			PostalCode struct {
+				Pin         int     `json:"pin"`
+				District    string  `json:"district"`
+				StateCode   string  `json:"state_code"`
+				CountryCode string  `json:"country_code"`
+				PrePaid     string  `json:"pre_paid"` // "Y" or "N"
+				Cash        string  `json:"cash"`
+				Pickup      string  `json:"pickup"`
+				COD         string  `json:"cod"`
+				IsODA       string  `json:"is_oda"`
+				SortCode    string  `json:"sort_code"`
+				MaxWeight   float64 `json:"max_weight"`
+				MaxAmount   float64 `json:"max_amount"`
+				Remarks     string  `json:"remarks"`
+				Inc         string  `json:"inc"`
+			} `json:"postal_code"`
 		} `json:"delivery_codes"`
 	}
 
 	if err := json.Unmarshal(body, &pincodeResp); err != nil {
-		return nil, fmt.Errorf("failed to parse pincode response: %w, body: %s", err, string(body))
+		return nil, fmt.Errorf("%w: could not parse the carrier response: %v", ErrCarrierUnavailable, err)
 	}
 
+	// A 2xx with no delivery codes is the carrier's definitive negative.
 	if len(pincodeResp.DeliveryCode) == 0 {
-		return nil, fmt.Errorf("pincode %s is not serviceable", pincode)
+		return nil, fmt.Errorf("%w: %s", ErrPincodeNotServiceable, pincode)
 	}
 
-	pc := pincodeResp.DeliveryCode[0]
+	pc := pincodeResp.DeliveryCode[0].PostalCode
 	return &PincodeServiceability{
-		Pincode:        pc.PostalCode,
-		District:       pc.District,
-		City:           pc.City,
-		State:          pc.State,
-		COD:            pc.Cod == "Y",
+		Pincode:  strconv.Itoa(pc.Pin),
+		District: pc.District,
+		// The carrier reports a district and a state code; there is no separate
+		// city field. Reporting the district as the city is what it means here.
+		City:           pc.District,
+		State:          pc.StateCode,
+		COD:            pc.COD == "Y",
 		Prepaid:        pc.PrePaid == "Y",
 		Pickup:         pc.Pickup == "Y",
-		ReachableODA:   pc.ODA == "Y",
+		ReachableODA:   pc.IsODA == "Y",
 		SortCode:       pc.SortCode,
-		MaxWeight:      pc.MaxWeight,
-		MaxAmount:      pc.MaxAmount,
+		MaxWeight:      int(pc.MaxWeight),
+		MaxAmount:      int(pc.MaxAmount),
 		StateCode:      pc.StateCode,
 		Remarks:        pc.Remarks,
-		IncomingCenter: pc.IncomingCenter,
+		IncomingCenter: pc.Inc,
 	}, nil
 }
 
