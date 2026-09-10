@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -36,6 +37,8 @@ func NewAuthHandler(db *database.DBClient, cfg *config.Config) *AuthHandler {
 		cfg.GoogleClientSecret,
 		cfg.GoogleRedirectURL,
 	)
+
+	ensureOAuthTempIndex(context.Background(), db.MongoDB)
 
 	return &AuthHandler{
 		DB:          db,
@@ -263,18 +266,18 @@ func generateRandomToken(n int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func oauthStateCacheKey(state string) string    { return "oauth_state:" + state }
-func oauthExchangeCacheKey(code string) string  { return "oauth_exchange:" + code }
+func oauthStateCacheKey(state string) string   { return "oauth_state:" + state }
+func oauthExchangeCacheKey(code string) string { return "oauth_exchange:" + code }
 
 // GoogleLogin initiates Google OAuth login
 func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	ctx := c.Context()
 
-	// Generate a random state token to prevent CSRF, and store it in Redis
-	// rather than in process memory: the request that redirects here and the
-	// one that receives Google's callback are not guaranteed to land on the
-	// same server process (this matters even outside Lambda -- any
-	// multi-instance deploy has the same problem).
+	// Generate a random state token to prevent CSRF, and store it in Mongo
+	// (see oauth_store.go) rather than in process memory: the request that
+	// redirects here and the one that receives Google's callback are not
+	// guaranteed to land on the same server process (this matters even
+	// outside Lambda -- any multi-instance deploy has the same problem).
 	state, err := generateRandomToken(24)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -282,7 +285,7 @@ func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 			"message": "Failed to start Google sign-in",
 		})
 	}
-	if err := h.DB.CacheSet(ctx, oauthStateCacheKey(state), true, 10*time.Minute); err != nil {
+	if err := oauthTempSet(ctx, h.DB.MongoDB, oauthStateCacheKey(state), "", 10*time.Minute); err != nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"success": false,
 			"message": "Google sign-in is temporarily unavailable",
@@ -313,14 +316,12 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
 
-	// Validate state against the Redis-backed store from GoogleLogin, and
+	// Validate state against the Mongo-backed store from GoogleLogin, and
 	// consume it either way -- a state token is only ever good for one
 	// callback. This used to log a failure and continue anyway regardless of
 	// the outcome, which defeated the entire point of a CSRF state check.
-	var stateFound bool
-	stateErr := h.DB.CacheGet(ctx, oauthStateCacheKey(state), &stateFound)
-	h.DB.CacheDel(ctx, oauthStateCacheKey(state))
-	if state == "" || stateErr != nil {
+	_, stateFound := oauthTempConsume(ctx, h.DB.MongoDB, oauthStateCacheKey(state))
+	if state == "" || !stateFound {
 		fmt.Printf("State validation failed for state: %s\n", state)
 		frontendURL := h.Config.FrontendURL
 		redirectErr := url.QueryEscape("invalid_state")
@@ -512,7 +513,7 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 	// below) with this code to get the real token back over a request body
 	// instead; the code is deleted on first use.
 	exchangeCode, err := generateRandomToken(24)
-	if err != nil || h.DB.CacheSet(ctx, oauthExchangeCacheKey(exchangeCode), token, 60*time.Second) != nil {
+	if err != nil || oauthTempSet(ctx, h.DB.MongoDB, oauthExchangeCacheKey(exchangeCode), token, 60*time.Second) != nil {
 		redirectErr := url.QueryEscape("token_exchange_failed")
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
@@ -535,10 +536,8 @@ func (h *AuthHandler) ExchangeOAuthCode(c *fiber.Ctx) error {
 	}
 
 	ctx := c.Context()
-	var token string
-	err := h.DB.CacheGet(ctx, oauthExchangeCacheKey(req.Code), &token)
-	h.DB.CacheDel(ctx, oauthExchangeCacheKey(req.Code))
-	if err != nil || token == "" {
+	token, ok := oauthTempConsume(ctx, h.DB.MongoDB, oauthExchangeCacheKey(req.Code))
+	if !ok || token == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"message": "Invalid or expired code",

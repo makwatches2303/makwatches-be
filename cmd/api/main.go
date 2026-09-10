@@ -33,8 +33,7 @@ func main() {
 	mongoClient, _, err := config.InitMongoDB(cfg)
 	if err != nil {
 		log.Printf("MongoDB connection error: %v", err)
-		log.Printf("Check if MongoDB is running at %s", cfg.MongoURI)
-		log.Fatal("Cannot continue without database connection")
+		log.Fatal("Cannot continue without database connection -- check MONGO_URI and that MongoDB is reachable")
 	}
 	defer func() {
 		if err := mongoClient.Disconnect(context.Background()); err != nil {
