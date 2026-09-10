@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -12,6 +13,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 )
 
 // routeDeps carries everything the domain registrars need.
@@ -72,6 +74,12 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 	fb := firebase.NewProvider(cfg.FirebaseCredentialsJSON, cfg.FirebaseBucketName)
 	media := mediaindex.New(fb, mediaindex.DefaultTTL)
 
+	shipmentQueue, err := queue.NewShipmentQueue(cfg.SQSQueueURL)
+	if err != nil {
+		log.Printf("[SETUP] WARNING: SQS shipment queue unavailable, falling back to synchronous Delhivery calls: %v", err)
+		shipmentQueue = nil
+	}
+
 	d := &routeDeps{
 		app:      app,
 		db:       db,
@@ -82,7 +90,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		auth:        NewAuthHandler(db, cfg),
 		product:     NewProductHandler(db, cfg, fb, media),
 		cart:        NewCartHandler(db, cfg),
-		order:       NewOrderHandler(db, cfg),
+		order:       NewOrderHandler(db, cfg, shipmentQueue),
 		payment:     NewPaymentHandler(db, cfg),
 		rec:         NewRecommendationHandler(db, cfg),
 		userProfile: NewUserProfileHandler(db, cfg),

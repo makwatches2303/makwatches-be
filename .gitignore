@@ -85,3 +85,7 @@ dist/
 build/
 
 .firebase-admin.json
+
+# AWS Lambda deploy build output (bootstrap zips, rendered from source each run)
+deploy/aws/build/
+deploy/aws/__pycache__/

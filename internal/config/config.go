@@ -59,6 +59,11 @@ type Config struct {
 	// the callback URL with this token embedded/configured on Delhivery's
 	// side; see DelhiveryWebhook in shipping_handler.go.
 	DelhiveryWebhookToken string
+	// SQS queue URL for the async Delhivery shipment-creation flow. Empty
+	// under the non-Lambda entrypoint (cmd/api) and in local dev -- callers
+	// fall back to the synchronous Delhivery call. Set by deploy/aws/deploy.sh
+	// as a Lambda environment variable.
+	SQSQueueURL string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -117,6 +122,7 @@ func LoadConfig() (*Config, error) {
 		DelhiveryReturnPincode:  getEnv("DELHIVERY_RETURN_PINCODE", "360370"),
 		DelhiveryReturnPhone:    getEnv("DELHIVERY_RETURN_PHONE", "9974959693"),
 		DelhiveryWebhookToken:   getEnv("DELHIVERY_WEBHOOK_TOKEN", ""),
+		SQSQueueURL:             getEnv("SQS_QUEUE_URL", ""),
 	}
 
 	// JWT_SECRET used to default to a literal string committed in this repo,
@@ -135,6 +141,21 @@ func LoadConfig() (*Config, error) {
 	return cfg, nil
 }
 
+// redactURICredentials strips a URI's userinfo (user:pass@) before it goes
+// anywhere near a log line -- connection strings routinely carry the DB
+// password inline (mongodb+srv://user:pass@host/...), and log output is far
+// less access-controlled than the config itself (shipped to CloudWatch, kept
+// indefinitely by default, and under Lambda potentially in a different AWS
+// account's log group than the one the credential belongs to).
+func redactURICredentials(uri string) string {
+	if at := strings.Index(uri, "@"); at != -1 {
+		if scheme := strings.Index(uri, "://"); scheme != -1 && scheme < at {
+			return uri[:scheme+3] + "***@" + uri[at+1:]
+		}
+	}
+	return uri
+}
+
 // InitMongoDB initializes the MongoDB client
 func InitMongoDB(config *Config) (*mongo.Client, *mongo.Database, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -146,7 +167,7 @@ func InitMongoDB(config *Config) (*mongo.Client, *mongo.Database, error) {
 		SetConnectTimeout(5 * time.Second).
 		SetServerSelectionTimeout(5 * time.Second)
 
-	log.Printf("Attempting to connect to MongoDB at %s...", config.MongoURI)
+	log.Printf("Attempting to connect to MongoDB at %s...", redactURICredentials(config.MongoURI))
 
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
@@ -171,7 +192,7 @@ func InitMongoDB(config *Config) (*mongo.Client, *mongo.Database, error) {
 
 // InitRedis initializes the Redis client
 func InitRedis(config *Config) (*redis.Client, error) {
-	log.Printf("Attempting to connect to Redis at %s...", config.RedisURI)
+	log.Printf("Attempting to connect to Redis at %s...", redactURICredentials(config.RedisURI))
 
 	// redis.Options.Addr wants a bare host:port -- it is not a URL parser.
 	// REDIS_URI is commonly copied straight from a provider's dashboard

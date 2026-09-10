@@ -150,7 +150,7 @@ func (h *AccountHandler) GetAccountOrders(c *fiber.Ctx) error {
 	c.Params("userID", user.UserID.Hex())
 
 	// Use the existing OrderHandler's GetOrders method
-	orderHandler := NewOrderHandler(h.DB, h.Config)
+	orderHandler := NewOrderHandler(h.DB, h.Config, nil)
 	return orderHandler.GetOrders(c)
 }
 
@@ -158,7 +158,7 @@ func (h *AccountHandler) GetAccountOrders(c *fiber.Ctx) error {
 func (h *AccountHandler) GetAccountOrder(c *fiber.Ctx) error {
 	// We can reuse the existing OrderHandler's GetOrder method
 	// It already checks if the user is authorized to view the order
-	orderHandler := NewOrderHandler(h.DB, h.Config)
+	orderHandler := NewOrderHandler(h.DB, h.Config, nil)
 	return orderHandler.GetOrder(c)
 }
 

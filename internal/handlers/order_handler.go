@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -19,10 +18,11 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/debuglog"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/services"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/shipment"
 )
 
 // OrderHandler handles order related requests
@@ -30,10 +30,13 @@ type OrderHandler struct {
 	DB               *database.DBClient
 	Config           *config.Config
 	DelhiveryService *services.DelhiveryService
+	// ShipmentQueue is nil under the non-Lambda entrypoint (cmd/api) and in
+	// local dev -- Checkout falls back to a synchronous Delhivery call.
+	ShipmentQueue *queue.ShipmentQueue
 }
 
 // NewOrderHandler creates a new instance of OrderHandler
-func NewOrderHandler(db *database.DBClient, cfg *config.Config) *OrderHandler {
+func NewOrderHandler(db *database.DBClient, cfg *config.Config, shipmentQueue *queue.ShipmentQueue) *OrderHandler {
 	log.Printf("[ORDER_HANDLER] Initializing OrderHandler with Delhivery config...")
 	log.Printf("[ORDER_HANDLER] Delhivery API Token: %s (length: %d)", maskToken(cfg.DelhiveryAPIToken), len(cfg.DelhiveryAPIToken))
 	log.Printf("[ORDER_HANDLER] Delhivery Base URL: %s", cfg.DelhiveryBaseURL)
@@ -70,6 +73,7 @@ func NewOrderHandler(db *database.DBClient, cfg *config.Config) *OrderHandler {
 		DB:               db,
 		Config:           cfg,
 		DelhiveryService: delhiveryService,
+		ShipmentQueue:    shipmentQueue,
 	}
 }
 
@@ -367,17 +371,24 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		log.Printf("[CHECKOUT] ⚠️ PickupDetails is NIL!")
 	}
 
-	// Create shipment with Delhivery before responding. This used to be fired
-	// off in a detached goroutine, but nothing guarantees a goroutine outlives
-	// the request once the handler returns (true under Lambda, and even under
-	// a long-running server on shutdown), so the shipment call is now made
-	// synchronously. A Delhivery failure is logged and recorded on the order
-	// (see createDelhiveryShipment) but does not fail the checkout response,
-	// since the order and payment are already committed at this point.
-	if h.DelhiveryService != nil {
-		log.Printf("[CHECKOUT] 📦 Creating Delhivery shipment for OrderID=%s", order.ID.Hex())
-		h.createDelhiveryShipment(ctx, &order)
-	} else {
+	// Hand shipment creation off to SQS when configured (the Lambda/HTTP API
+	// deploy); otherwise call it synchronously as before. A Delhivery failure
+	// (or an enqueue failure, with synchronous fallback) is logged and
+	// recorded on the order but never fails the checkout response, since the
+	// order and payment are already committed at this point.
+	switch {
+	case h.ShipmentQueue != nil:
+		log.Printf("[CHECKOUT] 📦 Enqueuing Delhivery shipment for OrderID=%s", order.ID.Hex())
+		if err := h.ShipmentQueue.EnqueueShipment(ctx, order.ID.Hex()); err != nil {
+			log.Printf("[CHECKOUT] ⚠️ Failed to enqueue shipment, falling back to synchronous call: %v", err)
+			if h.DelhiveryService != nil {
+				shipment.CreateDelhiveryShipment(ctx, h.Config, h.DelhiveryService, h.DB.MongoDB, &order)
+			}
+		}
+	case h.DelhiveryService != nil:
+		log.Printf("[CHECKOUT] 📦 Creating Delhivery shipment synchronously for OrderID=%s", order.ID.Hex())
+		shipment.CreateDelhiveryShipment(ctx, h.Config, h.DelhiveryService, h.DB.MongoDB, &order)
+	default:
 		log.Printf("[CHECKOUT] ⚠️ DelhiveryService is nil - shipment will NOT be created for OrderID=%s", order.ID.Hex())
 	}
 
@@ -404,180 +415,6 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		"message": "Order placed successfully",
 		"data":    order,
 	})
-}
-
-// createDelhiveryShipment creates a shipment with Delhivery for the order.
-// Called synchronously from Checkout, after the order is already committed.
-func (h *OrderHandler) createDelhiveryShipment(ctx context.Context, order *models.Order) {
-	// Use human-readable order number for logging
-	orderDisplay := order.OrderNumber
-	if orderDisplay == "" {
-		orderDisplay = order.ID.Hex()
-	}
-
-	log.Printf("[DELHIVERY] ========== Starting shipment creation for order %s ==========", orderDisplay)
-
-	// Check if Delhivery is configured
-	if h.Config.DelhiveryAPIToken == "" {
-		log.Printf("[DELHIVERY] ERROR: API Token not configured! Skipping shipment for order %s", orderDisplay)
-		log.Printf("[DELHIVERY] Please set DELHIVERY_API_TOKEN in your .env file")
-		return
-	}
-	debuglog.Printf("[DELHIVERY] API Token configured: %s... (first 10 chars)\n", h.Config.DelhiveryAPIToken[:min(10, len(h.Config.DelhiveryAPIToken))])
-	debuglog.Printf("[DELHIVERY] Base URL: %s\n", h.Config.DelhiveryBaseURL)
-	debuglog.Printf("[DELHIVERY] Pickup Location: %s\n", h.Config.DelhiveryPickupLocation)
-
-	// Build product description from order items
-	var productNames []string
-	totalQuantity := 0
-	for _, item := range order.Items {
-		productNames = append(productNames, item.ProductName)
-		totalQuantity += item.Quantity
-	}
-	productDesc := strings.Join(productNames, ", ")
-	if len(productDesc) > 200 {
-		productDesc = productDesc[:197] + "..."
-	}
-	debuglog.Printf("[DELHIVERY] Product description: %s\n", productDesc)
-	debuglog.Printf("[DELHIVERY] Total quantity: %d\n", totalQuantity)
-
-	// Determine payment mode
-	paymentMode := "Prepaid"
-	codAmount := 0.0
-	if order.PaymentInfo.Method == "cod" {
-		paymentMode = "COD"
-		codAmount = order.Total
-	}
-	debuglog.Printf("[DELHIVERY] Payment mode: %s, COD Amount: %.2f\n", paymentMode, codAmount)
-
-	// Get customer details
-	customerName := order.CustomerName
-	if customerName == "" {
-		customerName = order.ShippingAddress.Name
-	}
-	if customerName == "" {
-		customerName = "Customer"
-	}
-
-	customerPhone := order.CustomerPhone
-	if customerPhone == "" {
-		customerPhone = order.ShippingAddress.Phone
-	}
-
-	// Get city and state from shipping address (ensure correct values are used)
-	customerCity := strings.TrimSpace(order.ShippingAddress.City)
-	customerState := strings.TrimSpace(order.ShippingAddress.State)
-	customerPincode := strings.TrimSpace(order.ShippingAddress.ZipCode)
-	customerAddress := strings.TrimSpace(order.ShippingAddress.Street)
-	customerCountry := strings.TrimSpace(order.ShippingAddress.Country)
-	if customerCountry == "" {
-		customerCountry = "India"
-	}
-
-	debuglog.Printf("[DELHIVERY] Customer Name: %s\n", customerName)
-	debuglog.Printf("[DELHIVERY] Customer Phone: %s\n", customerPhone)
-	debuglog.Printf("[DELHIVERY] Customer Address: %s\n", customerAddress)
-	debuglog.Printf("[DELHIVERY] Customer City: %s, State: %s, Pincode: %s\n", customerCity, customerState, customerPincode)
-
-	// Use human-readable order number for Delhivery
-	orderRef := order.OrderNumber
-	if orderRef == "" {
-		// Fallback to ObjectID if OrderNumber not set
-		orderRef = order.ID.Hex()
-	}
-	debuglog.Printf("[DELHIVERY] Order Reference: %s\n", orderRef)
-
-	// Create shipment request with all details
-	req := services.CreateShipmentRequest{
-		CustomerName:    customerName,
-		CustomerPhone:   customerPhone,
-		CustomerEmail:   order.CustomerEmail,
-		CustomerAddress: customerAddress,
-		CustomerCity:    customerCity,
-		CustomerState:   customerState,
-		CustomerPincode: customerPincode,
-		CustomerCountry: customerCountry,
-		OrderID:         orderRef, // Use human-readable order number
-		OrderDate:       order.CreatedAt.Format("2006-01-02"),
-		TotalAmount:     order.Total,
-		PaymentMode:     paymentMode,
-		CODAmount:       codAmount,
-		ProductQuantity: totalQuantity,
-		ProductDesc:     productDesc,
-		// Default package dimensions for watches
-		Weight:  500, // 500 grams
-		Length:  15,  // 15 cm
-		Breadth: 10,  // 10 cm
-		Height:  8,   // 8 cm
-	}
-
-	// Create items list
-	for _, item := range order.Items {
-		req.Items = append(req.Items, services.ShipmentItem{
-			Name:     item.ProductName,
-			SKU:      item.ProductID.Hex(),
-			Quantity: item.Quantity,
-			Price:    item.Price,
-		})
-	}
-
-	debuglog.Printf("[DELHIVERY] Request prepared with %d items, total amount: %.2f\n", len(req.Items), req.TotalAmount)
-	debuglog.Printf("[DELHIVERY] Calling Delhivery API...\n")
-
-	// Call Delhivery API
-	shipmentResp, err := h.DelhiveryService.CreateShipment(req)
-
-	orderCollection := h.DB.MongoDB.Collection("orders")
-
-	if err != nil {
-		log.Printf("[DELHIVERY] ERROR: Failed to create shipment for order %s: %v", orderDisplay, err)
-
-		// Update order with error info
-		_, updateErr := orderCollection.UpdateOne(ctx, bson.M{"_id": order.ID}, bson.M{
-			"$set": bson.M{
-				"shipping_info": models.ShippingInfo{
-					Provider:          "delhivery",
-					ShipmentError:     err.Error(),
-					RetryCount:        1,
-					ShipmentCreatedAt: time.Now(),
-				},
-				"updated_at": time.Now(),
-			},
-		})
-		if updateErr != nil {
-			log.Printf("[DELHIVERY] ERROR: Failed to update order with error info: %v", updateErr)
-		} else {
-			debuglog.Printf("[DELHIVERY] Order updated with error info\n")
-		}
-		log.Printf("[DELHIVERY] ========== Shipment creation FAILED for order %s ==========", orderDisplay)
-		return
-	}
-
-	log.Printf("[DELHIVERY] SUCCESS: Waybill received: %s", shipmentResp.Waybill)
-
-	// Update order with successful shipping info
-	trackingURL := fmt.Sprintf("https://www.delhivery.com/track/package/%s", shipmentResp.Waybill)
-	_, updateErr := orderCollection.UpdateOne(ctx, bson.M{"_id": order.ID}, bson.M{
-		"$set": bson.M{
-			"shipping_info": models.ShippingInfo{
-				Provider:          "delhivery",
-				Waybill:           shipmentResp.Waybill,
-				TrackingURL:       trackingURL,
-				ShipmentStatus:    "manifested",
-				ShipmentCreatedAt: time.Now(),
-				LastStatusUpdate:  time.Now(),
-			},
-			"updated_at": time.Now(),
-		},
-	})
-	if updateErr != nil {
-		log.Printf("[DELHIVERY] ERROR: Failed to update order with shipping info: %v", updateErr)
-		return
-	}
-
-	debuglog.Printf("[DELHIVERY] SUCCESS: Order %s updated with waybill %s\n", orderDisplay, shipmentResp.Waybill)
-	debuglog.Printf("[DELHIVERY] Tracking URL: %s\n", trackingURL)
-	log.Printf("[DELHIVERY] ========== Shipment creation COMPLETED for order %s ==========", orderDisplay)
 }
 
 // GetOrders retrieves order history for a user
