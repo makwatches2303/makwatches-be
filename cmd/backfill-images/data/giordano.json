@@ -1,0 +1,19 @@
+{
+  "buckets": [
+    {
+      "brand": "GIORDANO",
+      "category": "Men \u2014 Leather watch",
+      "images": [
+        "https://www.giordanotimewear.com/cdn/shop/files/mmexport1784279371275.jpg?v=1784713084&width=720",
+        "https://www.giordanotimewear.com/cdn/shop/files/2025-03-1315-21-14_A_R8_S4.jpg?v=1759991803&width=720"
+      ]
+    },
+    {
+      "brand": "GIORDANO",
+      "category": "Men \u2014 Gold watch",
+      "images": [
+        "https://www.giordanotimewear.com/cdn/shop/files/3_b5a47353-bfb3-4f30-8e2e-1036943f8125.jpg?v=1760094519&width=720"
+      ]
+    }
+  ]
+}

@@ -65,6 +65,11 @@ type imageBucket struct {
 	// e.g. a handful of "Casio"-branded rows in Mongo are actually mislabeled
 	// London Fog products, and must not be given Casio-logo photos.
 	ExcludeNameContains string `json:"excludeNameContains,omitempty"`
+	// IncludeNameContains, when set, restricts this bucket to only products
+	// whose name contains this substring (case-insensitive) -- the inverse of
+	// ExcludeNameContains, for targeting exactly those same mislabeled rows
+	// with photos of their real brand (London Fog) instead of skipping them.
+	IncludeNameContains string `json:"includeNameContains,omitempty"`
 }
 
 type bucketFile struct {
@@ -143,6 +148,10 @@ func main() {
 				"$not": primitive.Regex{Pattern: regexp.QuoteMeta(b.ExcludeNameContains), Options: "i"},
 			}
 			log.Printf("  excluding names containing %q", b.ExcludeNameContains)
+		}
+		if b.IncludeNameContains != "" {
+			filter["name"] = primitive.Regex{Pattern: regexp.QuoteMeta(b.IncludeNameContains), Options: "i"}
+			log.Printf("  restricting to names containing %q", b.IncludeNameContains)
 		}
 		cursor, err := products.Find(ctx, filter)
 		if err != nil {

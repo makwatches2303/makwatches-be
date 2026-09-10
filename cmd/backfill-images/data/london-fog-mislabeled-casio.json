@@ -1,0 +1,22 @@
+{
+  "buckets": [
+    {
+      "brand": "Casio",
+      "category": "Men \u2014 Leather watch",
+      "includeNameContains": "London Fog",
+      "images": [
+        "https://cdn.eternz.com/thumbnails/products/3_1ef39ce2_thumbnail_1024.jpg",
+        "https://cdn.eternz.com/thumbnails/products/3_16121883_thumbnail_1024.jpg"
+      ]
+    },
+    {
+      "brand": "Casio",
+      "category": "Men \u2014 metal watch",
+      "includeNameContains": "London Fog",
+      "images": [
+        "https://cdn.eternz.com/thumbnails/products/3_0aceb0bb_thumbnail_1024.jpg",
+        "https://cdn.eternz.com/thumbnails/products/3_bf748326_thumbnail_1024.jpg"
+      ]
+    }
+  ]
+}
