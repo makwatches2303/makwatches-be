@@ -96,10 +96,12 @@ type Product struct {
 }
 
 func main() {
-	// Get MongoDB URI from environment
+	// Get MongoDB URI from environment. No hardcoded fallback: this file used
+	// to carry a live Atlas connection string as a default, which meant the
+	// credential sat in git history in plaintext. Fail loudly instead.
 	mongoURI := os.Getenv("MONGODB_URI")
 	if mongoURI == "" {
-		mongoURI = "mongodb+srv://mananparmar23:9LduGU7lb2D0pgjy@manan.t9lsnek.mongodb.net/makwatches?retryWrites=true&w=majority"
+		log.Fatal("MONGODB_URI is required and was not set")
 	}
 
 	// Connect to MongoDB

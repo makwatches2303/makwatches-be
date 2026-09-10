@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"github.com/gofiber/fiber/v2"
-
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 )
 
@@ -36,18 +34,18 @@ func registerCatalogRoutes(d *routeDeps) {
 	adminProducts.Delete("/:id", d.product.DeleteProduct)
 }
 
-// registerMediaRoutes wires image upload and the legacy static asset mount.
+// registerMediaRoutes wires image upload.
 //
-// The /uploads mount is retained deliberately. Firebase Storage is the only
-// write target for new media, but ./uploads still holds files written before
-// that was true, and legacy records may still reference them. Removing the
-// mount is a separate, verified step -- not a Phase 1 side effect.
+// The local ./uploads static mount that used to live here is gone. Firebase
+// Storage is the only write target for media now (see UploadHandler.Upload
+// and SettingsHandler.UploadLogo), and every legacy "/uploads/<object>"
+// reference already stored in Mongo resolves to Firebase dynamically via
+// internal/imageurl.Resolve. Before deploying this, run
+// `go run ./cmd/migrate-uploads -apply` to push whatever is still sitting in
+// the local ./uploads directory into Firebase under its exact existing
+// object name -- otherwise those legacy references resolve to objects that
+// don't exist in the bucket.
 func registerMediaRoutes(d *routeDeps) {
-	d.app.Static("/uploads", "./uploads")
-	d.app.Get("/uploads/*", func(c *fiber.Ctx) error {
-		return c.SendStatus(fiber.StatusNotFound)
-	})
-
 	d.app.Post("/upload",
 		middleware.Auth(d.cfg.JWTSecret),
 		middleware.Role("admin"),

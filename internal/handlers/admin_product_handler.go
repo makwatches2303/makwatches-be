@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 
+	"github.com/shivam-mishra-20/mak-watches-be/internal/debuglog"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
 
@@ -147,9 +148,12 @@ func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
 	// Get the inserted ID
 	product.ID = result.InsertedID.(primitive.ObjectID)
 
-	// Invalidate relevant caches
-	cacheKey := "products:" + product.Category
-	h.DB.CacheDel(ctx, cacheKey)
+	// Invalidate the cached product listings. This used to CacheDel a key
+	// ("products:"+category) that never matched the real cached key format
+	// (products:v<n>:<category>:<minPrice>:<maxPrice>:<sortBy>:<order>:<page>:
+	// <limit> -- see GetProducts), so it silently did nothing. Bumping the
+	// version invalidates every cached listing page/filter/sort at once.
+	h.DB.BumpCacheVersion(ctx, "products")
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"success": true,
@@ -160,8 +164,8 @@ func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
 
 // UpdateProduct updates an existing product (admin only)
 func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
-	fmt.Printf("[UpdateProduct] Called for ID: %s\n", c.Params("id"))
-	fmt.Printf("[UpdateProduct] Incoming body: %s\n", string(c.BodyRaw()))
+	debuglog.Printf("[UpdateProduct] Called for ID: %s\n", c.Params("id"))
+	debuglog.Printf("[UpdateProduct] Incoming body: %s\n", string(c.BodyRaw()))
 
 	ctx := c.Context()
 
@@ -256,7 +260,7 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 
 	// Parse product data from body (works with form fields or JSON)
 	if err := c.BodyParser(&updatedProduct); err != nil {
-		fmt.Printf("[UpdateProduct] Error parsing body: %v\n", err)
+		debuglog.Printf("[UpdateProduct] Error parsing body: %v\n", err)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"message": "Invalid product data",
@@ -390,7 +394,7 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 
 	_, err = collection.UpdateOne(ctx, bson.M{"_id": objectID}, update)
 	if err != nil {
-		fmt.Printf("[UpdateProduct] Error updating product: %v\n", err)
+		debuglog.Printf("[UpdateProduct] Error updating product: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
 			"message": "Failed to update product",
@@ -398,13 +402,13 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 		})
 	}
 
-	// Invalidate cache
+	// Invalidate cache: the single-product key is exact and still correctly
+	// targeted; the product-listing cache (see BumpCacheVersion's caller in
+	// CreateProduct for why) can't be targeted by key, so bump its version
+	// instead -- covers both the old and new category in one call.
 	cacheKey := fmt.Sprintf("product:%s", id)
 	h.DB.CacheDel(ctx, cacheKey)
-	categoryCacheKey := "products:" + updatedProduct.Category
-	h.DB.CacheDel(ctx, categoryCacheKey)
-	oldCategoryCacheKey := "products:" + existingProduct.Category
-	h.DB.CacheDel(ctx, oldCategoryCacheKey)
+	h.DB.BumpCacheVersion(ctx, "products")
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
@@ -415,9 +419,9 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 
 // DeleteProduct removes a product from the database (admin only)
 func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
-	fmt.Printf("[DeleteProduct] Called for ID: %s\n", c.Params("id"))
+	debuglog.Printf("[DeleteProduct] Called for ID: %s\n", c.Params("id"))
 	defer func() {
-		fmt.Printf("[DeleteProduct] Completed for ID: %s\n", c.Params("id"))
+		debuglog.Printf("[DeleteProduct] Completed for ID: %s\n", c.Params("id"))
 	}()
 
 	ctx := c.Context()
@@ -425,7 +429,7 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 	// Get product ID
 	id := c.Params("id")
 	if id == "" {
-		fmt.Printf("[DeleteProduct] Product ID missing\n")
+		debuglog.Printf("[DeleteProduct] Product ID missing\n")
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"message": "Product ID is required",
@@ -435,7 +439,7 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 	// Convert string ID to ObjectID
 	objectID, err := primitive.ObjectIDFromHex(id)
 	if err != nil {
-		fmt.Printf("[DeleteProduct] Invalid product ID format: %v\n", err)
+		debuglog.Printf("[DeleteProduct] Invalid product ID format: %v\n", err)
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"message": "Invalid product ID format",
@@ -452,7 +456,7 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 	// Delete the product
 	deleteResult, err := collection.DeleteOne(ctx, bson.M{"_id": objectID})
 	if err != nil {
-		fmt.Printf("[DeleteProduct] Error deleting product: %v\n", err)
+		debuglog.Printf("[DeleteProduct] Error deleting product: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
 			"message": "Failed to delete product",
@@ -460,7 +464,7 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 		})
 	}
 	if deleteResult.DeletedCount == 0 {
-		fmt.Printf("[DeleteProduct] No product deleted for ID: %s\n", id)
+		debuglog.Printf("[DeleteProduct] No product deleted for ID: %s\n", id)
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success": false,
 			"message": "Product not found or already deleted",
@@ -469,17 +473,17 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 
 	// After finding the product
 	if findErr != nil {
-		fmt.Printf("[DeleteProduct] Error finding product: %v\n", findErr)
+		debuglog.Printf("[DeleteProduct] Error finding product: %v\n", findErr)
 	} else {
-		fmt.Printf("[DeleteProduct] Found product: %+v\n", product)
+		debuglog.Printf("[DeleteProduct] Found product: %+v\n", product)
 	}
 
 	// After deleting
-	fmt.Printf("[DeleteProduct] Delete result: %+v\n", deleteResult)
+	debuglog.Printf("[DeleteProduct] Delete result: %+v\n", deleteResult)
 
 	// Before deleting images
 	if findErr == nil && len(product.Images) > 0 {
-		fmt.Printf("[DeleteProduct] Deleting images: %+v\n", product.Images)
+		debuglog.Printf("[DeleteProduct] Deleting images: %+v\n", product.Images)
 	}
 
 	// ALWAYS delete images if product existed and had images
@@ -502,20 +506,15 @@ func (h *ProductHandler) DeleteProduct(c *fiber.Ctx) error {
 	}
 
 	// Invalidate cache
-	fmt.Printf("[DeleteProduct] Invalidating cache for product:%s\n", id)
+	debuglog.Printf("[DeleteProduct] Invalidating cache for product:%s\n", id)
 	h.DB.CacheDel(ctx, fmt.Sprintf("product:%s", id))
 
-	// If we found the product, also clear category cache
-	if findErr == nil && product.Category != "" {
-		fmt.Printf("[DeleteProduct] Invalidating cache for products:%s\n", product.Category)
-		h.DB.CacheDel(ctx, "products:"+product.Category)
-	}
+	// Invalidate the product-listing cache (see BumpCacheVersion's caller in
+	// CreateProduct for why a direct CacheDel can't target it).
+	debuglog.Printf("[DeleteProduct] Invalidating products listing cache\n")
+	h.DB.BumpCacheVersion(ctx, "products")
 
-	// For good measure, also clear the global products cache
-	fmt.Printf("[DeleteProduct] Invalidating global products cache\n")
-	h.DB.CacheDel(ctx, "products:")
-
-	fmt.Printf("[DeleteProduct] Product deleted successfully for ID: %s\n", id)
+	debuglog.Printf("[DeleteProduct] Product deleted successfully for ID: %s\n", id)
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": "Product and associated resources deleted successfully",

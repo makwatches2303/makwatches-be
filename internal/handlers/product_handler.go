@@ -165,9 +165,13 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	findOptions.SetLimit(int64(limit))
 	findOptions.SetSort(bson.D{{Key: sortBy, Value: sortDirection}})
 
-	// First check if we have this query cached in Redis
-	cacheKey := fmt.Sprintf("products:%s:%s:%s:%s:%d:%d",
-		category, minPriceStr, maxPriceStr, sortBy, page, limit)
+	// First check if we have this query cached in Redis. The version segment
+	// lets any write invalidate every cached list page/filter/sort
+	// combination at once via BumpCacheVersion, instead of a write path
+	// having to guess this exact key -- see CacheVersion's doc comment.
+	cacheVersion := h.DB.CacheVersion(ctx, "products")
+	cacheKey := fmt.Sprintf("products:v%d:%s:%s:%s:%s:%s:%d:%d",
+		cacheVersion, category, minPriceStr, maxPriceStr, sortBy, order, page, limit)
 
 	var products []models.Product
 	err = h.DB.CacheGet(ctx, cacheKey, &products)

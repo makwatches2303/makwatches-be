@@ -116,6 +116,41 @@ func (db *DBClient) CacheSet(ctx context.Context, key string, value interface{},
 	return db.Redis.Set(ctx, key, data, expiration).Err()
 }
 
+// CacheVersion returns the current value of a named versioned-cache counter
+// (0 if it has never been bumped, or if Redis is unavailable). Callers build
+// cache keys that embed this value -- e.g. fmt.Sprintf("products:v%d:...",
+// version) -- so that BumpCacheVersion invalidates every such key at once
+// without having to know or enumerate them.
+//
+// This exists because a paginated, filtered, sorted list (like the product
+// listing) can be cached under effectively unbounded key combinations
+// (every filter × sort × page), so a write path can never reliably guess
+// and delete "the" key to invalidate -- see the history of a real bug here:
+// writes were calling CacheDel with a key that never matched the real
+// cached key format, silently leaving stale list pages cached for up to
+// their full TTL after every create/update/delete.
+func (db *DBClient) CacheVersion(ctx context.Context, name string) int64 {
+	if db.Redis == nil {
+		return 0
+	}
+	v, err := db.Redis.Get(ctx, "cache_version:"+name).Int64()
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// BumpCacheVersion increments a named versioned-cache counter (see
+// CacheVersion), orphaning every key built from its previous value. Orphaned
+// keys are never actively deleted -- they simply stop being read, and expire
+// on their own existing TTL like any other cache entry.
+func (db *DBClient) BumpCacheVersion(ctx context.Context, name string) {
+	if db.Redis == nil {
+		return
+	}
+	db.Redis.Incr(ctx, "cache_version:"+name)
+}
+
 // CacheDel deletes data from Redis cache
 func (db *DBClient) CacheDel(ctx context.Context, keys ...string) error {
 	// Check if Redis is available

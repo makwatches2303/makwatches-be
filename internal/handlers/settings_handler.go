@@ -4,22 +4,24 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // SettingsHandler handles settings related operations
 type SettingsHandler struct {
-	DB *mongo.Database
+	DB       *mongo.Database
+	Firebase *firebase.Provider
 }
 
 // NewSettingsHandler creates a new settings handler
-func NewSettingsHandler(db *mongo.Database) *SettingsHandler {
+func NewSettingsHandler(db *mongo.Database, fb *firebase.Provider) *SettingsHandler {
 	return &SettingsHandler{
-		DB: db,
+		DB:       db,
+		Firebase: fb,
 	}
 }
 
@@ -187,23 +189,38 @@ func (h *SettingsHandler) UploadLogo() fiber.Handler {
 			})
 		}
 
-		// Generate a unique filename
-		filename := primitive.NewObjectID().Hex() + "-" + file.Filename
+		ctx := c.Context()
 
-		// Save the file
-		if err := c.SaveFile(file, "./uploads/"+filename); err != nil {
+		fbClient, err := h.Firebase.Client(ctx)
+		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"success": false,
-				"message": "Error saving logo",
+				"message": "Failed to init Firebase client",
+				"error":   err.Error(),
+			})
+		}
+
+		opened, err := file.Open()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Error reading logo file",
+				"error":   err.Error(),
+			})
+		}
+		logoURL, err := fbClient.UploadFile(ctx, opened, file.Filename)
+		opened.Close()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Error uploading logo to Firebase",
 				"error":   err.Error(),
 			})
 		}
 
 		// Update the settings with the new logo URL
 		collection := h.DB.Collection("settings")
-		ctx := c.Context()
 
-		logoURL := "/uploads/" + filename
 		update := bson.M{
 			"$set": bson.M{
 				"logo":       logoURL,
