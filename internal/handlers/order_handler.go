@@ -19,6 +19,7 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/debuglog"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/services"
@@ -366,10 +367,16 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		log.Printf("[CHECKOUT] ⚠️ PickupDetails is NIL!")
 	}
 
-	// Create shipment with Delhivery asynchronously
+	// Create shipment with Delhivery before responding. This used to be fired
+	// off in a detached goroutine, but nothing guarantees a goroutine outlives
+	// the request once the handler returns (true under Lambda, and even under
+	// a long-running server on shutdown), so the shipment call is now made
+	// synchronously. A Delhivery failure is logged and recorded on the order
+	// (see createDelhiveryShipment) but does not fail the checkout response,
+	// since the order and payment are already committed at this point.
 	if h.DelhiveryService != nil {
-		log.Printf("[CHECKOUT] 📦 Starting Delhivery shipment creation goroutine for OrderID=%s", order.ID.Hex())
-		go h.createDelhiveryShipment(&order)
+		log.Printf("[CHECKOUT] 📦 Creating Delhivery shipment for OrderID=%s", order.ID.Hex())
+		h.createDelhiveryShipment(ctx, &order)
 	} else {
 		log.Printf("[CHECKOUT] ⚠️ DelhiveryService is nil - shipment will NOT be created for OrderID=%s", order.ID.Hex())
 	}
@@ -399,8 +406,9 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 	})
 }
 
-// createDelhiveryShipment creates a shipment with Delhivery for the order
-func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
+// createDelhiveryShipment creates a shipment with Delhivery for the order.
+// Called synchronously from Checkout, after the order is already committed.
+func (h *OrderHandler) createDelhiveryShipment(ctx context.Context, order *models.Order) {
 	// Use human-readable order number for logging
 	orderDisplay := order.OrderNumber
 	if orderDisplay == "" {
@@ -415,13 +423,9 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		log.Printf("[DELHIVERY] Please set DELHIVERY_API_TOKEN in your .env file")
 		return
 	}
-	log.Printf("[DELHIVERY] API Token configured: %s... (first 10 chars)", h.Config.DelhiveryAPIToken[:min(10, len(h.Config.DelhiveryAPIToken))])
-	log.Printf("[DELHIVERY] Base URL: %s", h.Config.DelhiveryBaseURL)
-	log.Printf("[DELHIVERY] Pickup Location: %s", h.Config.DelhiveryPickupLocation)
-
-	// Small delay to ensure order is fully committed to database
-	log.Printf("[DELHIVERY] Waiting 2 seconds for order to be committed...")
-	time.Sleep(2 * time.Second)
+	debuglog.Printf("[DELHIVERY] API Token configured: %s... (first 10 chars)\n", h.Config.DelhiveryAPIToken[:min(10, len(h.Config.DelhiveryAPIToken))])
+	debuglog.Printf("[DELHIVERY] Base URL: %s\n", h.Config.DelhiveryBaseURL)
+	debuglog.Printf("[DELHIVERY] Pickup Location: %s\n", h.Config.DelhiveryPickupLocation)
 
 	// Build product description from order items
 	var productNames []string
@@ -434,8 +438,8 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 	if len(productDesc) > 200 {
 		productDesc = productDesc[:197] + "..."
 	}
-	log.Printf("[DELHIVERY] Product description: %s", productDesc)
-	log.Printf("[DELHIVERY] Total quantity: %d", totalQuantity)
+	debuglog.Printf("[DELHIVERY] Product description: %s\n", productDesc)
+	debuglog.Printf("[DELHIVERY] Total quantity: %d\n", totalQuantity)
 
 	// Determine payment mode
 	paymentMode := "Prepaid"
@@ -444,7 +448,7 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		paymentMode = "COD"
 		codAmount = order.Total
 	}
-	log.Printf("[DELHIVERY] Payment mode: %s, COD Amount: %.2f", paymentMode, codAmount)
+	debuglog.Printf("[DELHIVERY] Payment mode: %s, COD Amount: %.2f\n", paymentMode, codAmount)
 
 	// Get customer details
 	customerName := order.CustomerName
@@ -470,10 +474,10 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		customerCountry = "India"
 	}
 
-	log.Printf("[DELHIVERY] Customer Name: %s", customerName)
-	log.Printf("[DELHIVERY] Customer Phone: %s", customerPhone)
-	log.Printf("[DELHIVERY] Customer Address: %s", customerAddress)
-	log.Printf("[DELHIVERY] Customer City: %s, State: %s, Pincode: %s", customerCity, customerState, customerPincode)
+	debuglog.Printf("[DELHIVERY] Customer Name: %s\n", customerName)
+	debuglog.Printf("[DELHIVERY] Customer Phone: %s\n", customerPhone)
+	debuglog.Printf("[DELHIVERY] Customer Address: %s\n", customerAddress)
+	debuglog.Printf("[DELHIVERY] Customer City: %s, State: %s, Pincode: %s\n", customerCity, customerState, customerPincode)
 
 	// Use human-readable order number for Delhivery
 	orderRef := order.OrderNumber
@@ -481,7 +485,7 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		// Fallback to ObjectID if OrderNumber not set
 		orderRef = order.ID.Hex()
 	}
-	log.Printf("[DELHIVERY] Order Reference: %s", orderRef)
+	debuglog.Printf("[DELHIVERY] Order Reference: %s\n", orderRef)
 
 	// Create shipment request with all details
 	req := services.CreateShipmentRequest{
@@ -517,20 +521,19 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		})
 	}
 
-	log.Printf("[DELHIVERY] Request prepared with %d items, total amount: %.2f", len(req.Items), req.TotalAmount)
-	log.Printf("[DELHIVERY] Calling Delhivery API...")
+	debuglog.Printf("[DELHIVERY] Request prepared with %d items, total amount: %.2f\n", len(req.Items), req.TotalAmount)
+	debuglog.Printf("[DELHIVERY] Calling Delhivery API...\n")
 
 	// Call Delhivery API
 	shipmentResp, err := h.DelhiveryService.CreateShipment(req)
 
 	orderCollection := h.DB.MongoDB.Collection("orders")
-	bgCtx := context.Background()
 
 	if err != nil {
 		log.Printf("[DELHIVERY] ERROR: Failed to create shipment for order %s: %v", orderDisplay, err)
 
 		// Update order with error info
-		_, updateErr := orderCollection.UpdateOne(bgCtx, bson.M{"_id": order.ID}, bson.M{
+		_, updateErr := orderCollection.UpdateOne(ctx, bson.M{"_id": order.ID}, bson.M{
 			"$set": bson.M{
 				"shipping_info": models.ShippingInfo{
 					Provider:          "delhivery",
@@ -544,7 +547,7 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		if updateErr != nil {
 			log.Printf("[DELHIVERY] ERROR: Failed to update order with error info: %v", updateErr)
 		} else {
-			log.Printf("[DELHIVERY] Order updated with error info")
+			debuglog.Printf("[DELHIVERY] Order updated with error info\n")
 		}
 		log.Printf("[DELHIVERY] ========== Shipment creation FAILED for order %s ==========", orderDisplay)
 		return
@@ -554,7 +557,7 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 
 	// Update order with successful shipping info
 	trackingURL := fmt.Sprintf("https://www.delhivery.com/track/package/%s", shipmentResp.Waybill)
-	_, updateErr := orderCollection.UpdateOne(bgCtx, bson.M{"_id": order.ID}, bson.M{
+	_, updateErr := orderCollection.UpdateOne(ctx, bson.M{"_id": order.ID}, bson.M{
 		"$set": bson.M{
 			"shipping_info": models.ShippingInfo{
 				Provider:          "delhivery",
@@ -572,8 +575,8 @@ func (h *OrderHandler) createDelhiveryShipment(order *models.Order) {
 		return
 	}
 
-	log.Printf("[DELHIVERY] SUCCESS: Order %s updated with waybill %s", orderDisplay, shipmentResp.Waybill)
-	log.Printf("[DELHIVERY] Tracking URL: %s", trackingURL)
+	debuglog.Printf("[DELHIVERY] SUCCESS: Order %s updated with waybill %s\n", orderDisplay, shipmentResp.Waybill)
+	debuglog.Printf("[DELHIVERY] Tracking URL: %s\n", trackingURL)
 	log.Printf("[DELHIVERY] ========== Shipment creation COMPLETED for order %s ==========", orderDisplay)
 }
 

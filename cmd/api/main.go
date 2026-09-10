@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/debuglog"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/handlers"
 )
 
@@ -23,6 +24,10 @@ func main() {
 	}
 
 	log.Printf("Starting server in %s environment...", cfg.Environment)
+
+	// High-volume per-request debug logging (auth success, checkout/shipment
+	// narration) is on everywhere except production.
+	debuglog.SetEnabled(cfg.Environment != "production")
 
 	// Initialize MongoDB client
 	mongoClient, _, err := config.InitMongoDB(cfg)

@@ -5,17 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sync"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
-// GoogleOAuth handles Google OAuth authentication
+// GoogleOAuth handles Google OAuth authentication.
+//
+// CSRF state is not tracked here -- it used to be an in-process map, which
+// does not survive across server instances (or Lambda cold starts). The
+// caller (AuthHandler in internal/handlers/auth_handler.go) stores state in
+// Redis instead, alongside its other shared state.
 type GoogleOAuth struct {
 	config *oauth2.Config
-	states map[string]bool
-	mu     sync.RWMutex
 }
 
 // GoogleUserInfo represents user information from Google
@@ -45,31 +47,12 @@ func NewGoogleOAuth(clientID, clientSecret, redirectURL string) *GoogleOAuth {
 
 	return &GoogleOAuth{
 		config: config,
-		states: make(map[string]bool),
 	}
 }
 
 // GetAuthURL returns the Google OAuth authorization URL
 func (g *GoogleOAuth) GetAuthURL(state string) string {
 	return g.config.AuthCodeURL(state, oauth2.AccessTypeOffline)
-}
-
-// SaveState saves a state for CSRF protection
-func (g *GoogleOAuth) SaveState(state string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.states[state] = true
-}
-
-// ValidateState validates a state for CSRF protection
-func (g *GoogleOAuth) ValidateState(state string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if _, exists := g.states[state]; exists {
-		delete(g.states, state) // Remove state after validation
-		return true
-	}
-	return false
 }
 
 // Exchange exchanges authorization code for access token

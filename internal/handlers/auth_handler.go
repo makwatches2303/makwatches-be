@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"strings"
@@ -93,17 +95,15 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 
 	// Create new user
 	now := time.Now()
-	// Accept role from request if valid, else default to "user"
-	role := "user"
-	if req.Role == "admin" || req.Role == "user" {
-		role = req.Role
-	}
+	// Role is never taken from the request: /auth/register is public, and an
+	// admin role must only ever be granted by an existing admin. Every
+	// self-registered account is a "user" account, full stop.
 	newUser := models.User{
 		ID:           primitive.NewObjectID(),
 		Name:         req.Name,
 		Email:        req.Email,
 		Password:     string(hashedPassword),
-		Role:         role,
+		Role:         "user",
 		AuthProvider: "local", // Local authentication
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -251,21 +251,46 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	})
 }
 
+// generateRandomToken returns a cryptographically random hex string n bytes
+// long -- used for both the OAuth CSRF state and the post-login exchange
+// code, neither of which should be guessable the way a nanosecond timestamp
+// is.
+func generateRandomToken(n int) (string, error) {
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func oauthStateCacheKey(state string) string    { return "oauth_state:" + state }
+func oauthExchangeCacheKey(code string) string  { return "oauth_exchange:" + code }
+
 // GoogleLogin initiates Google OAuth login
 func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
-	// Generate a state token to prevent request forgery
-	state := fmt.Sprintf("%d", time.Now().UnixNano())
+	ctx := c.Context()
 
-	// Log the state for debugging
-	fmt.Printf("Generated state: %s\n", state)
-
-	// Store state in server-side storage instead of cookies
-	h.GoogleOAuth.SaveState(state)
+	// Generate a random state token to prevent CSRF, and store it in Redis
+	// rather than in process memory: the request that redirects here and the
+	// one that receives Google's callback are not guaranteed to land on the
+	// same server process (this matters even outside Lambda -- any
+	// multi-instance deploy has the same problem).
+	state, err := generateRandomToken(24)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to start Google sign-in",
+		})
+	}
+	if err := h.DB.CacheSet(ctx, oauthStateCacheKey(state), true, 10*time.Minute); err != nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"success": false,
+			"message": "Google sign-in is temporarily unavailable",
+		})
+	}
 
 	// Redirect to Google's OAuth page
 	authURL := h.GoogleOAuth.GetAuthURL(state)
-	// Log the auth URL for debugging redirect_uri mismatch issues
-	fmt.Printf("Google Auth URL: %s\n", authURL)
 	return c.Redirect(authURL)
 }
 
@@ -288,15 +313,18 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
 
-	// Validate state using our server-side state store
-	if state == "" || !h.GoogleOAuth.ValidateState(state) {
-		// For development we'll continue anyway
+	// Validate state against the Redis-backed store from GoogleLogin, and
+	// consume it either way -- a state token is only ever good for one
+	// callback. This used to log a failure and continue anyway regardless of
+	// the outcome, which defeated the entire point of a CSRF state check.
+	var stateFound bool
+	stateErr := h.DB.CacheGet(ctx, oauthStateCacheKey(state), &stateFound)
+	h.DB.CacheDel(ctx, oauthStateCacheKey(state))
+	if state == "" || stateErr != nil {
 		fmt.Printf("State validation failed for state: %s\n", state)
-		// In production, you would return an error here
-		// return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-		//    "success": false,
-		//    "message": "Invalid state parameter",
-		// })
+		frontendURL := h.Config.FrontendURL
+		redirectErr := url.QueryEscape("invalid_state")
+		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
 
 	// Exchange code for token
@@ -475,12 +503,52 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 		})
 	}
 
-	// Prepare frontend redirect URL with token
 	frontendURL := h.Config.FrontendURL
 
-	// Redirect to frontend with token as query param
-	// In a real application, use a more secure method to pass the token
-	return c.Redirect(fmt.Sprintf("%s/auth/callback?token=%s", frontendURL, token))
+	// Hand back a short-lived, single-use exchange code instead of the JWT
+	// itself. A token embedded directly in a redirect URL ends up in browser
+	// history, server access logs, and any Referer header the browser sends
+	// onward. The frontend calls POST /auth/exchange (ExchangeOAuthCode
+	// below) with this code to get the real token back over a request body
+	// instead; the code is deleted on first use.
+	exchangeCode, err := generateRandomToken(24)
+	if err != nil || h.DB.CacheSet(ctx, oauthExchangeCacheKey(exchangeCode), token, 60*time.Second) != nil {
+		redirectErr := url.QueryEscape("token_exchange_failed")
+		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
+	}
+
+	return c.Redirect(fmt.Sprintf("%s/auth/callback?code=%s", frontendURL, exchangeCode))
+}
+
+// ExchangeOAuthCode redeems the short-lived code GoogleCallback hands the
+// frontend for the JWT it was issued alongside. The code is deleted on
+// first use, so a replayed or expired code is rejected.
+func (h *AuthHandler) ExchangeOAuthCode(c *fiber.Ctx) error {
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := c.BodyParser(&req); err != nil || req.Code == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Missing exchange code",
+		})
+	}
+
+	ctx := c.Context()
+	var token string
+	err := h.DB.CacheGet(ctx, oauthExchangeCacheKey(req.Code), &token)
+	h.DB.CacheDel(ctx, oauthExchangeCacheKey(req.Code))
+	if err != nil || token == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Invalid or expired code",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"data":    fiber.Map{"token": token},
+	})
 }
 
 // Me retrieves current user information

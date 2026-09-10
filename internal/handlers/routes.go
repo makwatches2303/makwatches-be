@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -93,7 +95,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		shipping:    NewShippingHandler(db, cfg),
 		account:     NewAccountHandler(db, cfg),
 		upload:      NewUploadHandler(cfg, fb),
-		settings:    NewSettingsHandler(db.MongoDB),
+		settings:    NewSettingsHandler(db.MongoDB, fb),
 		catalogV1:   NewCatalogV1Handler(db, cfg, media),
 		storefront:  NewStorefrontHandler(db, cfg),
 	}
@@ -147,10 +149,11 @@ func registerSystemRoutes(d *routeDeps) {
 // registerAuthRoutes wires registration, login and the Google OAuth dance.
 func registerAuthRoutes(d *routeDeps) {
 	auth := d.app.Group("/auth")
-	auth.Post("/register", d.auth.Register)
-	auth.Post("/login", d.auth.Login)
+	auth.Post("/register", rateLimit(5, time.Minute), d.auth.Register)
+	auth.Post("/login", rateLimit(10, time.Minute), d.auth.Login)
 	auth.Get("/google", d.auth.GoogleLogin)
 	auth.Get("/google/callback", d.auth.GoogleCallback)
+	auth.Post("/exchange", d.auth.ExchangeOAuthCode)
 
 	d.app.Get("/me", d.protectedRoute(d.auth.Me)...)
 }

@@ -2,9 +2,11 @@ package config
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -52,6 +54,11 @@ type Config struct {
 	DelhiveryReturnState    string
 	DelhiveryReturnPincode  string
 	DelhiveryReturnPhone    string
+	// Shared secret Delhivery's webhook callback must present (as a bearer
+	// token or ?token= query param) before its payload is trusted. Register
+	// the callback URL with this token embedded/configured on Delhivery's
+	// side; see DelhiveryWebhook in shipping_handler.go.
+	DelhiveryWebhookToken string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -68,7 +75,7 @@ func LoadConfig() (*Config, error) {
 		DatabaseName:       getEnv("DATABASE_NAME", "makwatches"),
 		RedisURI:           getEnv("REDIS_URI", "localhost:6379"),
 		RedisPassword:      getEnv("REDIS_PASSWORD", ""),
-		JWTSecret:          getEnv("JWT_SECRET", "your_jwt_secret_key_here"),
+		JWTSecret:          getEnv("JWT_SECRET", ""),
 		JWTExpirationHours: getEnvAsInt("JWT_EXPIRATION_HOURS", 24),
 		RedisDatabase:      getEnvAsInt("REDIS_DATABASE", 0),
 		// Razorpay config (support both KEY/SECRET and KEY_ID/KEY_SECRET naming)
@@ -109,6 +116,20 @@ func LoadConfig() (*Config, error) {
 		DelhiveryReturnState:    getEnv("DELHIVERY_RETURN_STATE", "Gujarat"),
 		DelhiveryReturnPincode:  getEnv("DELHIVERY_RETURN_PINCODE", "360370"),
 		DelhiveryReturnPhone:    getEnv("DELHIVERY_RETURN_PHONE", "9974959693"),
+		DelhiveryWebhookToken:   getEnv("DELHIVERY_WEBHOOK_TOKEN", ""),
+	}
+
+	// JWT_SECRET used to default to a literal string committed in this repo,
+	// so any deploy that forgot to set it signed every token with a secret
+	// visible to anyone who can read the source. Outside development, an
+	// unset secret is a startup failure, not a silent fallback.
+	if cfg.JWTSecret == "" {
+		if cfg.Environment == "development" {
+			log.Println("WARNING: JWT_SECRET is not set. Using an insecure development-only default -- do not do this outside development.")
+			cfg.JWTSecret = "dev-only-insecure-secret"
+		} else {
+			return nil, errors.New("JWT_SECRET is required outside development")
+		}
 	}
 
 	return cfg, nil
@@ -152,8 +173,16 @@ func InitMongoDB(config *Config) (*mongo.Client, *mongo.Database, error) {
 func InitRedis(config *Config) (*redis.Client, error) {
 	log.Printf("Attempting to connect to Redis at %s...", config.RedisURI)
 
+	// redis.Options.Addr wants a bare host:port -- it is not a URL parser.
+	// REDIS_URI is commonly copied straight from a provider's dashboard
+	// (Redis Cloud, Upstash, ...) as a full "redis://host:port" URL, which
+	// go-redis's dialer then rejects with "too many colons in address". This
+	// silently fell back to running with no cache at all rather than ever
+	// actually failing loudly, which is how it went unnoticed.
+	addr := strings.TrimPrefix(strings.TrimPrefix(config.RedisURI, "rediss://"), "redis://")
+
 	client := redis.NewClient(&redis.Options{
-		Addr:        config.RedisURI,
+		Addr:        addr,
 		Password:    config.RedisPassword, // no password by default
 		DB:          config.RedisDatabase, // use default DB
 		DialTimeout: 5 * time.Second,

@@ -8,6 +8,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+
+	"github.com/shivam-mishra-20/mak-watches-be/internal/debuglog"
 )
 
 // TokenMetadata contains user metadata from the JWT token
@@ -23,7 +25,7 @@ func Auth(jwtSecret string) fiber.Handler {
         tokenHeader := c.Get("Authorization")
         if tokenHeader == "" {
             // Log the request details for debugging
-            fmt.Printf("[AUTH] Missing Authorization header - Method: %s, Path: %s, IP: %s\n", 
+            debuglog.Printf("[AUTH] Missing Authorization header - Method: %s, Path: %s, IP: %s\n",
                 c.Method(), c.Path(), c.IP())
             return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
                 "success": false,
@@ -123,7 +125,7 @@ func Auth(jwtSecret string) fiber.Handler {
         })
 
         // Log successful authentication
-        fmt.Printf("[AUTH] User authenticated - UserID: %s, Role: %s, Path: %s\n", 
+        debuglog.Printf("[AUTH] User authenticated - UserID: %s, Role: %s, Path: %s\n",
             userID.Hex(), role, c.Path())
 
         return c.Next()

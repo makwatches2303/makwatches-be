@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"context"
+	"crypto/hmac"
 	"errors"
 	"fmt"
 	"io"
@@ -305,8 +305,33 @@ func (h *ShippingHandler) CheckPincode(c *fiber.Ctx) error {
 	})
 }
 
-// DelhiveryWebhook handles status updates from Delhivery
+// DelhiveryWebhook handles status updates from Delhivery.
+//
+// Unlike RazorpayWebhook, Delhivery does not sign its callbacks with an
+// HMAC -- the mechanism it offers is a shared token you configure alongside
+// the registered callback URL in the Delhivery One dashboard. This handler
+// requires that same token back on every call, as a bearer token or a
+// ?token= query param, and fails closed (like RazorpayWebhook) if none is
+// configured: an unconfigured token must not silently mean "trust anyone."
 func (h *ShippingHandler) DelhiveryWebhook(c *fiber.Ctx) error {
+	if h.Config.DelhiveryWebhookToken == "" {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"success": false,
+			"message": "Webhook token not configured",
+		})
+	}
+
+	provided := strings.TrimPrefix(c.Get("Authorization"), "Bearer ")
+	if provided == "" {
+		provided = c.Query("token")
+	}
+	if provided == "" || !hmac.Equal([]byte(provided), []byte(h.Config.DelhiveryWebhookToken)) {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"success": false,
+			"message": "Invalid or missing webhook token",
+		})
+	}
+
 	body := c.Body()
 
 	// Parse webhook payload
@@ -675,52 +700,6 @@ func (h *ShippingHandler) RequestPickup(c *fiber.Ctx) error {
 		"message": "Pickup requested successfully",
 		"date":    req.PickupDate,
 	})
-}
-
-// Helper function used during checkout (not an HTTP handler)
-func (h *ShippingHandler) CreateShipmentAsync(order *models.Order) {
-	go func() {
-		// Small delay to ensure order is fully committed
-		time.Sleep(2 * time.Second)
-
-		shipmentResp, err := h.CreateShipmentForOrder(order)
-		if err != nil {
-			log.Printf("Failed to create shipment for order %s: %v", order.ID.Hex(), err)
-
-			// Update order with error
-			orderCol := h.DB.MongoDB.Collection("orders")
-			orderCol.UpdateOne(context.Background(), bson.M{"_id": order.ID}, bson.M{
-				"$set": bson.M{
-					"shipping_info": models.ShippingInfo{
-						Provider:      "delhivery",
-						ShipmentError: err.Error(),
-						RetryCount:    1,
-					},
-					"updated_at": time.Now(),
-				},
-			})
-			return
-		}
-
-		// Update order with shipping info
-		trackingURL := fmt.Sprintf("https://www.delhivery.com/track/package/%s", shipmentResp.Waybill)
-		orderCol := h.DB.MongoDB.Collection("orders")
-		orderCol.UpdateOne(context.Background(), bson.M{"_id": order.ID}, bson.M{
-			"$set": bson.M{
-				"shipping_info": models.ShippingInfo{
-					Provider:          "delhivery",
-					Waybill:           shipmentResp.Waybill,
-					TrackingURL:       trackingURL,
-					ShipmentStatus:    "manifested",
-					ShipmentCreatedAt: time.Now(),
-					LastStatusUpdate:  time.Now(),
-				},
-				"updated_at": time.Now(),
-			},
-		})
-
-		log.Printf("Shipment created for order %s: waybill=%s", order.ID.Hex(), shipmentResp.Waybill)
-	}()
 }
 
 // Unused import fix

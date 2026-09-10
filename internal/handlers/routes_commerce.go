@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 )
 
@@ -45,11 +47,6 @@ func registerOrderRoutes(d *routeDeps) {
 	orders.Get("/", middleware.Role("admin"), d.order.GetAllOrders)
 	orders.Patch("/:orderID/status", middleware.Role("admin"), d.order.UpdateOrderStatus)
 
-	// Retained from the original route table: the same status transition also
-	// registered through an admin-scoped subgroup.
-	adminOrders := orders.Group("/", middleware.Role("admin"))
-	adminOrders.Patch("/:orderID/status", d.order.UpdateOrderStatus)
-
 	d.app.Post("/checkout", d.protectedRoute(d.order.Checkout)...)
 }
 
@@ -57,7 +54,7 @@ func registerOrderRoutes(d *routeDeps) {
 // webhook is public and lives in registerWebhookRoutes.
 func registerPaymentRoutes(d *routeDeps) {
 	payments := d.protectedGroup("/payments")
-	payments.Post("/razorpay/order", d.payment.CreateRazorpayOrder)
+	payments.Post("/razorpay/order", rateLimit(20, time.Minute), d.payment.CreateRazorpayOrder)
 }
 
 // registerShippingRoutes wires public pincode/tracking lookups and the
