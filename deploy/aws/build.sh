@@ -13,7 +13,7 @@ build_one() {
   local name="$1" pkg="$2"
   echo "==> Building $name from $pkg"
   rm -f "$OUT_DIR/bootstrap"
-  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$OUT_DIR/bootstrap" "$pkg"
+  GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -buildvcs=false -trimpath -ldflags="-s -w" -o "$OUT_DIR/bootstrap" "$pkg"
   ( cd "$OUT_DIR" && rm -f "$name.zip" && zip -q -X "$name.zip" bootstrap && rm bootstrap )
   echo "==> Wrote $OUT_DIR/$name.zip"
 }

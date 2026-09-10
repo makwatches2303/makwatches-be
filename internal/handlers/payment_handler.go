@@ -142,7 +142,25 @@ func (h *PaymentHandler) CreateRazorpayOrder(c *fiber.Ctx) error {
 		return c.Status(resp.StatusCode).JSON(fiber.Map{"success": false, "message": "Gateway error", "raw": string(body)})
 	}
 
-	return c.JSON(fiber.Map{"success": true, "key": h.Cfg.RazorpayKey, "amount": amountPaise, "currency": "INR", "data": json.RawMessage(body)})
+	var rzpOrder map[string]any
+	_ = json.Unmarshal(body, &rzpOrder)
+	orderID, _ := rzpOrder["id"].(string)
+
+	return c.JSON(fiber.Map{
+		"success":  true,
+		"key":      h.Cfg.RazorpayKey,
+		"amount":   amountPaise,
+		"currency": "INR",
+		"orderId":  orderID,
+		"data": fiber.Map{
+			"key":      h.Cfg.RazorpayKey,
+			"amount":   amountPaise,
+			"currency": "INR",
+			"orderId":  orderID,
+			"id":       orderID,
+			"order":    rzpOrder,
+		},
+	})
 }
 
 // RazorpayWebhook validates webhook signatures from Razorpay

@@ -64,6 +64,14 @@ type Config struct {
 	// fall back to the synchronous Delhivery call. Set by deploy/aws/deploy.sh
 	// as a Lambda environment variable.
 	SQSQueueURL string
+
+	// FlowSell WhatsApp Integration
+	FlowSellAPIKey          string
+	FlowSellAPIBaseURL      string
+	WhatsAppPhoneNumberID   string
+	WhatsAppWelcomeTemplate string
+	WhatsAppCartTemplate    string
+	WhatsAppWelcomeImageURL string
 }
 
 // LoadConfig loads configuration from environment variables
@@ -75,7 +83,15 @@ func LoadConfig() (*Config, error) {
 	cfg := &Config{
 		Port:               getEnv("PORT", "8080"),
 		Environment:        getEnv("ENVIRONMENT", "development"),
-		FrontendURL:        getEnv("FRONTEND_URL", "http://localhost:3000"), // Default to localhost for development
+		FrontendURL: func() string {
+			if v := getEnv("FRONTEND_URL", ""); v != "" {
+				return strings.TrimRight(v, "/")
+			}
+			if getEnv("ENVIRONMENT", "development") == "production" {
+				return "https://makwatches.in"
+			}
+			return "http://localhost:3000"
+		}(),
 		MongoURI:           getEnv("MONGO_URI", "mongodb://localhost:27017"),
 		DatabaseName:       getEnv("DATABASE_NAME", "makwatches"),
 		RedisURI:           getEnv("REDIS_URI", "localhost:6379"),
@@ -123,6 +139,14 @@ func LoadConfig() (*Config, error) {
 		DelhiveryReturnPhone:    getEnv("DELHIVERY_RETURN_PHONE", "9974959693"),
 		DelhiveryWebhookToken:   getEnv("DELHIVERY_WEBHOOK_TOKEN", ""),
 		SQSQueueURL:             getEnv("SQS_QUEUE_URL", ""),
+
+		// FlowSell WhatsApp Integration
+		FlowSellAPIKey:          getEnv("FLOWSELL_API_KEY", "fsc_WR-3fFNU_hvOhqKjS8dVjxzKtQB02VPV"),
+		FlowSellAPIBaseURL:      getEnv("FLOWSELL_API_BASE_URL", "https://cmwhd2hdarqpip3krnua6ep3le0qhstm.lambda-url.ap-south-1.on.aws"),
+		WhatsAppPhoneNumberID:   getEnv("WHATSAPP_PHONE_NUMBER_ID", "1265231066679663"),
+		WhatsAppWelcomeTemplate: getEnv("WHATSAPP_WELCOME_TEMPLATE", "welcome_to_mak_watches"),
+		WhatsAppCartTemplate:    getEnv("WHATSAPP_CART_TEMPLATE", "mak_watches_cart_reminder"),
+		WhatsAppWelcomeImageURL: getEnv("WHATSAPP_WELCOME_IMAGE_URL", "https://storage.googleapis.com/mak-watches.firebasestorage.app/1789058269921474000-welcome-banner.jpg"),
 	}
 
 	// JWT_SECRET used to default to a literal string committed in this repo,

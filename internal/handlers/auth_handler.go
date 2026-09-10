@@ -269,15 +269,50 @@ func generateRandomToken(n int) (string, error) {
 func oauthStateCacheKey(state string) string   { return "oauth_state:" + state }
 func oauthExchangeCacheKey(code string) string { return "oauth_exchange:" + code }
 
+func isAllowedFrontendOrigin(origin string, configuredFrontend string) bool {
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	if host == "makwatches.in" || host == "www.makwatches.in" || strings.HasSuffix(host, ".makwatches.in") ||
+		host == "localhost:3000" || host == "127.0.0.1:3000" || host == "localhost:4200" ||
+		strings.HasSuffix(host, ".vercel.app") {
+		return true
+	}
+	if configuredFrontend != "" {
+		if cu, err := url.Parse(configuredFrontend); err == nil && cu.Host == u.Host {
+			return true
+		}
+	}
+	return false
+}
+
 // GoogleLogin initiates Google OAuth login
 func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 	ctx := c.Context()
 
+	// Capture the initiating frontend origin to preserve where the user came from
+	origin := c.Query("origin")
+	if origin == "" {
+		if ref := c.Get("Referer"); ref != "" {
+			if u, err := url.Parse(ref); err == nil && u.Scheme != "" && u.Host != "" {
+				origin = fmt.Sprintf("%s://%s", u.Scheme, u.Host)
+			}
+		}
+	}
+	if !isAllowedFrontendOrigin(origin, h.Config.FrontendURL) {
+		origin = h.Config.FrontendURL
+	}
+	if origin == "" || (h.Config.Environment == "production" && strings.Contains(origin, "localhost")) {
+		origin = "https://makwatches.in"
+	}
+
 	// Generate a random state token to prevent CSRF, and store it in Mongo
-	// (see oauth_store.go) rather than in process memory: the request that
-	// redirects here and the one that receives Google's callback are not
-	// guaranteed to land on the same server process (this matters even
-	// outside Lambda -- any multi-instance deploy has the same problem).
+	// (see oauth_store.go) along with the origin rather than in process memory.
 	state, err := generateRandomToken(24)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -285,7 +320,7 @@ func (h *AuthHandler) GoogleLogin(c *fiber.Ctx) error {
 			"message": "Failed to start Google sign-in",
 		})
 	}
-	if err := oauthTempSet(ctx, h.DB.MongoDB, oauthStateCacheKey(state), "", 10*time.Minute); err != nil {
+	if err := oauthTempSet(ctx, h.DB.MongoDB, oauthStateCacheKey(state), origin, 10*time.Minute); err != nil {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"success": false,
 			"message": "Google sign-in is temporarily unavailable",
@@ -308,22 +343,29 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 	// For debugging
 	fmt.Printf("Received state: %s\n", state)
 
+	// Validate state against the Mongo-backed store from GoogleLogin, and
+	// consume it either way -- a state token is only ever good for one callback.
+	var stateFound bool
+	frontendURL := h.Config.FrontendURL
+	if state != "" {
+		var savedOrigin string
+		savedOrigin, stateFound = oauthTempConsume(ctx, h.DB.MongoDB, oauthStateCacheKey(state))
+		if savedOrigin != "" && isAllowedFrontendOrigin(savedOrigin, h.Config.FrontendURL) {
+			frontendURL = savedOrigin
+		}
+	}
+	if frontendURL == "" || (h.Config.Environment == "production" && strings.Contains(frontendURL, "localhost")) {
+		frontendURL = "https://makwatches.in"
+	}
+
 	// Check for code parameter
 	if code == "" {
-		// Redirect to frontend callback with error so UI can show a message
-		frontendURL := h.Config.FrontendURL
 		redirectErr := url.QueryEscape("missing_code")
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
 
-	// Validate state against the Mongo-backed store from GoogleLogin, and
-	// consume it either way -- a state token is only ever good for one
-	// callback. This used to log a failure and continue anyway regardless of
-	// the outcome, which defeated the entire point of a CSRF state check.
-	_, stateFound := oauthTempConsume(ctx, h.DB.MongoDB, oauthStateCacheKey(state))
 	if state == "" || !stateFound {
 		fmt.Printf("State validation failed for state: %s\n", state)
-		frontendURL := h.Config.FrontendURL
 		redirectErr := url.QueryEscape("invalid_state")
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
@@ -333,7 +375,6 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 	if err != nil {
 		// Log detailed error and redirect to frontend with an error token
 		fmt.Printf("Google token exchange failed: %v\n", err)
-		frontendURL := h.Config.FrontendURL
 		// Include a short encoded error message so frontend can show it
 		redirectErr := url.QueryEscape("token_exchange_failed")
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
@@ -343,7 +384,6 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 	userInfo, err := h.GoogleOAuth.GetUserInfo(accessToken)
 	if err != nil {
 		fmt.Printf("Google GetUserInfo failed: %v\n", err)
-		frontendURL := h.Config.FrontendURL
 		redirectErr := url.QueryEscape("userinfo_failed")
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
@@ -504,8 +544,6 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 		})
 	}
 
-	frontendURL := h.Config.FrontendURL
-
 	// Hand back a short-lived, single-use exchange code instead of the JWT
 	// itself. A token embedded directly in a redirect URL ends up in browser
 	// history, server access logs, and any Referer header the browser sends
@@ -518,7 +556,7 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
 
-	return c.Redirect(fmt.Sprintf("%s/auth/callback?code=%s", frontendURL, exchangeCode))
+	return c.Redirect(fmt.Sprintf("%s/auth/callback?token=%s&code=%s", frontendURL, token, exchangeCode))
 }
 
 // ExchangeOAuthCode redeems the short-lived code GoogleCallback hands the
