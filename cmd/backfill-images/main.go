@@ -228,26 +228,43 @@ func main() {
 // Firebase Storage, returning the resulting public URL. Mirrors
 // cmd/seed-catalog's uploadImages helper (same User-Agent workaround for
 // retail-site WAFs, same content-type-from-extension logic).
+//
+// A srcURL of the form "file:///abs/path/to/image.jpg" is read from local
+// disk instead of downloaded -- an escape hatch for CDNs that block plain
+// HTTP clients on TLS/bot-detection grounds even with a browser User-Agent
+// (img.fossil.in does this); for those, fetch the bytes through the Browser
+// MCP tool as base64 first, write them to a local file, and point the
+// bucket pool's "images" entry at "file://" + that path.
 func downloadAndUpload(ctx context.Context, fb *firebase.FirebaseClient, srcURL, brand, name string, index int) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
+	var body []byte
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("bad request: %w", err)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	if localPath, ok := strings.CutPrefix(srcURL, "file://"); ok {
+		var err error
+		body, err = os.ReadFile(localPath)
+		if err != nil {
+			return "", fmt.Errorf("reading local file failed: %w", err)
+		}
+	} else {
+		client := &http.Client{Timeout: 30 * time.Second}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("download failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download returned %s", resp.Status)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading body failed: %w", err)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
+		if err != nil {
+			return "", fmt.Errorf("bad request: %w", err)
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("download failed: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("download returned %s", resp.Status)
+		}
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("reading body failed: %w", err)
+		}
 	}
 
 	ext := extFromURL(srcURL)

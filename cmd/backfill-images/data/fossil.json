@@ -1,0 +1,51 @@
+{
+  "buckets": [
+    {
+      "brand": "Fossil",
+      "category": "Men \u2014 Leather watch",
+      "images": [
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6188_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6195_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6196_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6187_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6143_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/me3272_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/me3273_1.webp"
+      ]
+    },
+    {
+      "brand": "Fossil",
+      "category": "Men \u2014 Gold watch",
+      "images": [
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6181_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6200set_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6201set_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6142_1.webp"
+      ]
+    },
+    {
+      "brand": "Fossil",
+      "category": "Men \u2014 Silver watch",
+      "images": [
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6180_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6183_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6185_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6186_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6192_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6199set_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6139_1.webp"
+      ]
+    },
+    {
+      "brand": "Fossil",
+      "category": "Men \u2014 metal watch",
+      "images": [
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6189_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6193_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6198set_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6202set_1.webp",
+        "file:///private/tmp/claude-501/-Volumes-External-AGX-makwatches/8a91467f-26c4-41f8-bb69-1b19ad32e1b8/scratchpad/fossil_images/fs6182_1.webp"
+      ]
+    }
+  ]
+}
