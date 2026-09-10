@@ -1,0 +1,62 @@
+{
+  "buckets": [
+    {
+      "brand": "Casio",
+      "category": "Men \u2014 metal watch",
+      "excludeNameContains": "London Fog",
+      "images": [
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/MTP-VT01D-1B/assets/MTP-VT01D-1B_Seq1.jpg.transform/main-visual-pc/image.jpg",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/MTP-VD01D-1E2V/assets/MTP-VD01D-1E2V_Seq1.jpg.transform/main-visual-pc/image.jpg",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/C/cr/crw/crw-001jb-9/assets/CRW-001JB-9.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MQ/MQ2/mq-24da-1a/assets/MQ-24DA-1A.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MQ/MQ2/mq-24da-2a/assets/MQ-24DA-2A.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MQ/MQ2/mq-24da-3a/assets/MQ-24DA-3A.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MQ/MQ2/mq-24ga-1a/assets/MQ-24GA-1A.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/A/AE/AE1/ae-1600hx-3av/assets/AE-1600HX-3AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-100d-1av/assets/BMS-100D-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-100d-7av/assets/BMS-100D-7AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-100d-8av/assets/BMS-100D-8AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-300d-1av/assets/BMS-300D-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-300d-2av/assets/BMS-300D-2AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-300d-7av/assets/BMS-300D-7AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-300gl-5av/assets/BMS-300GL-5AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/F/F9/F91/f-91ws-7a2/assets/F-91WS-7A2.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/F/F9/F91/f-91ws-7a3/assets/F-91WS-7A3.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/W/W2/W21/w-218hd-3av/assets/W-218HD-3AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/W/W2/w22/w-221h-1av/assets/W-221H-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/W/W2/w22/w-221h-1bv/assets/W-221H-1BV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/W/W2/w22/w-221h-8av/assets/W-221H-8AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/W/W8/W80/w-800hd-1av/assets/W-800HD-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/A/AE/AE1/ae-1600hx-1bv/assets/AE-1600HX-1BV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MQ/MQ2/MQ-24-7B2L/assets/MQ-24-7B2L_1.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MQ/MQ2/mq-24-7bll/assets/MQ-24-7BLL.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/A/AE/AE1/ae-1200whb-3bv/assets/AE-1200WHB-3BV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195d-1av/assets/MTP-B195D-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195d-2av/assets/MTP-B195D-2AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195d-3av/assets/MTP-B195D-3AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195d-7av/assets/MTP-B195D-7AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195rg-2av/assets/MTP-B195RG-2AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/F/F9/F91/F-91WS-7/assets/F-91WS-7.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/F/F9/F91/F-91WS-8/assets/F-91WS-8.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/F/F9/F91/f-91wg-9q/assets/F-91WG-9Q.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/F/F9/F91/f-91wm-1b/assets/F-91WM-1B.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/W/WS/WS1/ws-1800-1av/assets/WS-1800-1AV.png.transform/product-panel/image.png"
+      ]
+    },
+    {
+      "brand": "Casio",
+      "category": "Men \u2014 Leather watch",
+      "excludeNameContains": "London Fog",
+      "images": [
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/MTP-VT01L-7B2/assets/MTP-VT01L-7B2_Seq1.jpg.transform/main-visual-pc/image.jpg",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/MTP-VT01L-1B/assets/MTP-VT01L-1B_Seq1.jpg.transform/main-visual-pc/image.jpg",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-100l-1av/assets/BMS-100L-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-100l-5av/assets/BMS-100L-5AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-300l-1av/assets/BMS-300L-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/B/bm/bms/bms-300l-5av/assets/BMS-300L-5AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195l-1av/assets/MTP-B195L-1AV.png.transform/product-panel/image.png",
+        "https://www.casio.com/content/dam/casio/product-info/locales/in/en/timepiece/product/watch/M/MT/MTP/mtp-b195l-3av/assets/MTP-B195L-3AV.png.transform/product-panel/image.png"
+      ]
+    }
+  ]
+}
