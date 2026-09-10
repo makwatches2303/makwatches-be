@@ -1,0 +1,41 @@
+{
+  "buckets": [
+    {
+      "brand": "Citizen",
+      "category": "Men — metal watch",
+      "images": [
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5120-51l-1-BI5120-51L.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5120-51x-1-BI5120-51X.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5120-51z-1-BI5120-51Z.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5123-52x-1-BI5123-52X.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5124-50l-1-BI5124-50L.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5127-51h-1-BI5127-51H.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-an8223-54l-1-AN8223-54L.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-an8223-54x-1-AN8223-54X.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-an8224-51l-1-AN8224-51L.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/January2025/Collection-el3100-55n-1-EL3100-55N_F_shot.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/September2024/Collection-an3660-81x-1-AN3660-81X_F_shot_md.png",
+        "https://d3muc2kgcen4ha.cloudfront.net/cdncorp/storage/Products/August2024/Collection-bi5110-54b-1-BI5110-54B.png"
+      ]
+    },
+    {
+      "brand": "Daniel Hechter",
+      "category": "Men — Gold watch",
+      "images": [
+        "https://danielhechter.in/cdn/shop/files/3_b422f354-b400-407c-97ad-f5e692eac34e.jpg?v=1752662635",
+        "https://danielhechter.in/cdn/shop/files/3_3cadc9cc-9693-43b2-a050-4105ce8105f4.jpg?v=1754048339",
+        "https://danielhechter.in/cdn/shop/files/2025-01-2019-27-25_A_R8_S4.jpg?v=1752662636",
+        "https://danielhechter.in/cdn/shop/files/3_2ec7a1d9-7e86-4d44-a111-0cb3514112f2.jpg?v=1752662703",
+        "https://danielhechter.in/cdn/shop/files/2025-07-2314-29-50_A_R8_S3.jpg?v=1753446497",
+        "https://danielhechter.in/cdn/shop/files/3_53fc231c-d7c1-49d3-a5d8-13daff813d31.jpg?v=1767870778"
+      ]
+    },
+    {
+      "brand": "Police",
+      "category": "Men — Leather watch",
+      "images": [
+        "https://cdn.shopify.com/s/files/1/0634/3888/1014/files/PEWGQ0093401_01_350x.png?v=1769090481"
+      ]
+    }
+  ]
+}
