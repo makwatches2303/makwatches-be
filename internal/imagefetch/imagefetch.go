@@ -35,6 +35,14 @@
 //     (see "Sourcing correctly" below), never from a general listing/search
 //     page that mixes multiple products or variants.
 //
+//     When a source page genuinely offers multiple colorways of the same
+//     watch, that's not a scraping mistake to filter out -- it's real
+//     catalog data. Create one product per colorway, each sourced from that
+//     colorway's own scoped page/gallery, and link the resulting documents
+//     with a shared VariantGroupID (models.Product) instead of merging their
+//     images into one listing. See cmd/seed-catalog's package doc comment
+//     for the batch-file fields (variantGroupId/variantLabel) that do this.
+//
 // # Getting real full-resolution images, by source
 //
 //   - Amazon: do NOT read the #altImages thumbnail strip's own <img src>.

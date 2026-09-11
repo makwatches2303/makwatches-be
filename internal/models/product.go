@@ -45,6 +45,8 @@ type Product struct {
 	Slug             string     `json:"slug,omitempty" bson:"slug,omitempty"`                          // URL identity for /product/[slug]
 	SKU              string     `json:"sku,omitempty" bson:"sku,omitempty"`                            // Merchant stock-keeping unit
 	Collection       string     `json:"collection,omitempty" bson:"collection,omitempty"`              // Editorial grouping, distinct from Category
+	VariantGroupID   string     `json:"variantGroupId,omitempty" bson:"variant_group_id,omitempty"`    // Links sibling colorways of the same watch; empty means standalone
+	VariantLabel     string     `json:"variantLabel,omitempty" bson:"variant_label,omitempty"`         // Shown on the variant picker, e.g. "Elite Black"
 	CompareAtPrice   *float64   `json:"compareAtPrice,omitempty" bson:"compare_at_price,omitempty"`    // Struck-through reference price
 	ShortDescription string     `json:"shortDescription,omitempty" bson:"short_description,omitempty"` // One-line summary for cards
 	Media            []MediaRef `json:"media,omitempty" bson:"media,omitempty"`                        // Structured media, superseding Images[]

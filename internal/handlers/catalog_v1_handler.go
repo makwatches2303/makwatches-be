@@ -127,6 +127,20 @@ func (h *CatalogV1Handler) ListCollections(c *fiber.Ctx) error {
 	})
 }
 
+// ListVariants handles GET /api/v1/catalog/variants?groupId=
+func (h *CatalogV1Handler) ListVariants(c *fiber.Ctx) error {
+	variants, err := h.Catalog.ListVariants(c.Context(), c.Query("groupId"))
+	if err != nil {
+		return internalError(c, "Failed to list variants", err)
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "Variants retrieved successfully",
+		"data":    variants,
+	})
+}
+
 // Search handles GET /api/v1/search?q=
 func (h *CatalogV1Handler) Search(c *fiber.Ctx) error {
 	result, err := h.Catalog.Search(c.Context(), c.Query("q"), queryInt(c, "limit", 12))

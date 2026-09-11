@@ -18,6 +18,7 @@ func registerV1Routes(d *routeDeps) {
 	catalog.Get("/products/slug/:slug", d.catalogV1.GetProductBySlug)
 	catalog.Get("/products/:id", d.catalogV1.GetProductByID)
 	catalog.Get("/filters", d.product.GetCatalogFilters)
+	catalog.Get("/variants", d.catalogV1.ListVariants)
 
 	v1.Get("/collections", d.catalogV1.ListCollections)
 	v1.Get("/search", d.catalogV1.Search)

@@ -297,6 +297,12 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 	if updatedProduct.Stock < 0 {
 		updatedProduct.Stock = existingProduct.Stock
 	}
+	if updatedProduct.VariantGroupID == "" {
+		updatedProduct.VariantGroupID = existingProduct.VariantGroupID
+	}
+	if updatedProduct.VariantLabel == "" {
+		updatedProduct.VariantLabel = existingProduct.VariantLabel
+	}
 
 	// Derive Category if still blank but we have MainCategory/Subcategory
 	if updatedProduct.Category == "" && updatedProduct.MainCategory != "" {
@@ -388,7 +394,10 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 			"discount_amount":     updatedProduct.DiscountAmount,
 			"discount_start_date": updatedProduct.DiscountStartDate,
 			"discount_end_date":   updatedProduct.DiscountEndDate,
-			"updated_at":          updatedProduct.UpdatedAt,
+			// Variant linking (Phase 1 addition, see models.Product)
+			"variant_group_id": updatedProduct.VariantGroupID,
+			"variant_label":    updatedProduct.VariantLabel,
+			"updated_at":       updatedProduct.UpdatedAt,
 		},
 	}
 

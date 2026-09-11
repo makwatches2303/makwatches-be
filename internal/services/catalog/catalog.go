@@ -47,12 +47,13 @@ func New(db *database.DBClient, bucket string, media *mediaindex.Index) *Service
 
 // Query describes a catalog listing request.
 type Query struct {
-	Category     string
-	MainCategory string
-	Subcategory  string
-	Collection   string
-	Gender       string
-	Search       string
+	Category       string
+	MainCategory   string
+	Subcategory    string
+	Collection     string
+	VariantGroupID string
+	Gender         string
+	Search         string
 
 	// Attribute facets, mirroring the fields the products collection carries.
 	// Brand is multi-select; the rest are single-select.
@@ -152,6 +153,9 @@ func (s *Service) filter(q Query) bson.M {
 
 	if q.Collection != "" {
 		f["collection"] = q.Collection
+	}
+	if q.VariantGroupID != "" {
+		f["variant_group_id"] = q.VariantGroupID
 	}
 	if q.Gender != "" {
 		f["gender"] = q.Gender
@@ -352,6 +356,54 @@ func (s *Service) ListCollections(ctx context.Context) ([]Collection, error) {
 			Name:  r.Name,
 			Count: r.Count,
 		})
+	}
+	return out, nil
+}
+
+// VariantSummary is the reduced shape returned for a product's sibling
+// colorways -- identity, thumbnail and stock only. Deliberately excludes
+// price/discount fields: replicating those here would create a second place
+// discount math could drift from Product.GetFinalPrice()/the frontend's
+// effectivePrice(), and each sibling's own product page already computes its
+// own price correctly when you land on it.
+type VariantSummary struct {
+	ID           string `json:"id"`
+	Slug         string `json:"slug,omitempty"`
+	Name         string `json:"name"`
+	VariantLabel string `json:"variantLabel,omitempty"`
+	Thumbnail    string `json:"thumbnail,omitempty"`
+	InStock      bool   `json:"inStock"`
+}
+
+func toVariantSummary(p models.Product) VariantSummary {
+	return VariantSummary{
+		ID:           p.ID.Hex(),
+		Slug:         p.Slug,
+		Name:         p.Name,
+		VariantLabel: p.VariantLabel,
+		Thumbnail:    p.ImageURL,
+		InStock:      p.Stock > 0,
+	}
+}
+
+// ListVariants returns the sibling products sharing a variant group.
+//
+// Callers pass the groupID from a product they've already loaded (every
+// product carrying VariantGroupID exposes it on the wire), so this never
+// needs its own lookup of the source product the way a /products/:id/variants
+// route would.
+func (s *Service) ListVariants(ctx context.Context, groupID string) ([]VariantSummary, error) {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return []VariantSummary{}, nil
+	}
+	page, err := s.List(ctx, Query{VariantGroupID: groupID, Limit: maxLimit, SortBy: "name", Order: "asc"})
+	if err != nil {
+		return nil, fmt.Errorf("catalog: list variants: %w", err)
+	}
+	out := make([]VariantSummary, 0, len(page.Items))
+	for _, p := range page.Items {
+		out = append(out, toVariantSummary(p))
 	}
 	return out, nil
 }

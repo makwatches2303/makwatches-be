@@ -6,6 +6,17 @@
 // name + brand) is skipped, not duplicated. Meant to be run in small,
 // reviewed batches -- see cmd/seed-catalog/data/ for the batch file format.
 //
+// A source listing with multiple colorways becomes N batchProduct entries,
+// one per color -- never one entry with images mixed across colors (see
+// internal/imagefetch's package doc comment for why that's a real bug, not
+// just untidy data). Each entry's images must come from that colorway's own
+// scoped gallery/page, per the same package. To let the storefront offer a
+// picker between them, give every entry in the group the same
+// variantGroupId (any stable string you choose, e.g. "<brand>-<base model
+// slug>" -- there's no automatic way to infer "same watch minus the color"
+// from a name, so this is authored by hand or by whatever scrapes the
+// batch) and each its own variantLabel (e.g. "Elite Black").
+//
 // Usage:
 //
 //	go run ./cmd/seed-catalog -file cmd/seed-catalog/data/2026-09-mass-market-batch1.json
@@ -45,6 +56,8 @@ type batchProduct struct {
 	Description        string   `json:"description"`
 	Stock              int      `json:"stock"`
 	Images             []string `json:"images"`
+	VariantGroupID     string   `json:"variantGroupId,omitempty"`
+	VariantLabel       string   `json:"variantLabel,omitempty"`
 }
 
 type batchFile struct {
@@ -141,6 +154,8 @@ func main() {
 			Images:             uploadedURLs,
 			Stock:              p.Stock,
 			DiscountPercentage: &discount,
+			VariantGroupID:     p.VariantGroupID,
+			VariantLabel:       p.VariantLabel,
 			CreatedAt:          now,
 			UpdatedAt:          now,
 		}
