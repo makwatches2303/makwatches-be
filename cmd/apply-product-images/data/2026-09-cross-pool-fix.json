@@ -753,5 +753,51 @@
       "https://m.media-amazon.com/images/I/51E+aDwSmSS._SL1440_.jpg",
       "https://m.media-amazon.com/images/I/41bs3cH9zbS._SL1440_.jpg"
     ]
+  },
+  {
+    "product_id": "69d72788e795d4e00b0d9d13",
+    "product_name": "Fossil Neutra Chrono Grey Quartz Stainless Steel Watch FS5699",
+    "brand": "Fossil",
+    "images": [
+      "https://m.media-amazon.com/images/I/71Pp7uZE0hL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/718V4L9KPcL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/61uyl7hbbBL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/61-TUggoTHL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/811M4nMSmRL._SL1500_.jpg"
+    ]
+  },
+  {
+    "product_id": "69d7254ae795d4e00b0d9b98",
+    "product_name": "Fossil Blue GMT Silver Quartz Stainless Steel Watch FS6092",
+    "brand": "Fossil",
+    "images": [
+      "https://m.media-amazon.com/images/I/515ckrC--iL._SL1000_.jpg",
+      "https://m.media-amazon.com/images/I/41715uMW7yL._SL1000_.jpg",
+      "https://m.media-amazon.com/images/I/41O26GITdlL._SL1000_.jpg",
+      "https://m.media-amazon.com/images/I/61nI4kCCvoL._SL1000_.jpg"
+    ]
+  },
+  {
+    "product_id": "69d72510e795d4e00b0d9b5f",
+    "product_name": "Fossil Neutra Silver Watch FS5792",
+    "brand": "Fossil",
+    "images": [
+      "https://img02.watchstationindia.com/uploads/masterwsi/dealimages/6599/zoomimages/fs57923p1.jpg",
+      "https://img02.watchstationindia.com/uploads/masterwsi/dealimages/6599/zoomimages/fs57923p6.jpg",
+      "https://img02.watchstationindia.com/uploads/masterwsi/dealimages/6599/zoomimages/fs57923p7.jpg",
+      "https://img02.watchstationindia.com/uploads/masterwsi/dealimages/6599/zoomimages/fs57923p8.jpg",
+      "https://img02.watchstationindia.com/uploads/masterwsi/dealimages/6599/zoomimages/fs57923p10.jpg"
+    ]
+  },
+  {
+    "product_id": "69d72785e795d4e00b0d9d0f",
+    "product_name": "Fossil The Minimalist - Mono Black Watch FS5447",
+    "brand": "Fossil",
+    "images": [
+      "https://m.media-amazon.com/images/I/71WAr6TSVKL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/81TRfS6TvdL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/61Bn3rVk7wL._SL1500_.jpg",
+      "https://m.media-amazon.com/images/I/61IMqdka4gL._SL1500_.jpg"
+    ]
   }
 ]
