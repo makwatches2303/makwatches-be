@@ -23,6 +23,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/services"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/shipment"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 )
 
 // OrderHandler handles order related requests
@@ -409,6 +410,24 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 	// Invalidate order cache
 	ordersCacheKey := fmt.Sprintf("orders:%s", user.UserID.Hex())
 	h.DB.CacheDel(ctx, ordersCacheKey)
+
+	// Mark matching abandoned carts as recovered
+	customerPhone := req.CustomerPhone
+	if customerPhone == "" {
+		customerPhone = req.ShippingAddress.Phone
+	}
+	if customerPhone != "" {
+		if normPhone, err := whatsapp.NormalizePhoneNumber(customerPhone); err == nil {
+			_, _ = h.DB.Collections().AbandonedCarts.UpdateMany(
+				ctx,
+				bson.M{
+					"phone":  normPhone,
+					"status": bson.M{"$in": []string{"active", "reminded"}},
+				},
+				bson.M{"$set": bson.M{"status": "recovered", "updated_at": time.Now()}},
+			)
+		}
+	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"success": true,

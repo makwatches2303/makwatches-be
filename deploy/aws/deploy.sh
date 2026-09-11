@@ -156,6 +156,7 @@ sleep 10
 python3 "$SCRIPT_DIR/render_env.py" "$ENV_FILE" "$TMP_DIR/api-env.json" \
   --exclude FIREBASE_CREDENTIALS_JSON \
   --set ENVIRONMENT=production \
+  --set "FRONTEND_URL=${FRONTEND_URL:-https://makwatches.in}" \
   --set "SQS_QUEUE_URL=$QUEUE_URL" \
   --set "FIREBASE_SECRET_ARN=$SECRET_ARN"
 

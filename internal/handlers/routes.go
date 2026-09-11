@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 )
 
 // routeDeps carries everything the domain registrars need.
@@ -59,6 +61,8 @@ type routeDeps struct {
 	settings    *SettingsHandler
 	catalogV1   *CatalogV1Handler
 	storefront  *StorefrontHandler
+	subscriber  *SubscriberHandler
+	cartTracker *CartTrackerHandler
 }
 
 // SetupRoutes configures all application routes.
@@ -108,6 +112,13 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		storefront:  NewStorefrontHandler(db, cfg),
 	}
 
+	wa := whatsapp.NewClient(cfg)
+	d.subscriber = NewSubscriberHandler(db, cfg, wa)
+	d.cartTracker = NewCartTrackerHandler(db, cfg, wa)
+
+	// Start background worker for abandoned cart recovery
+	d.cartTracker.StartAbandonedCartWorker(context.Background(), 10*time.Minute)
+
 	d.admin = app.Group("/admin", middleware.Auth(cfg.JWTSecret), middleware.Role("admin"))
 
 	registerSystemRoutes(d)
@@ -124,9 +135,16 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 	registerRecommendationRoutes(d)
 	registerWebhookRoutes(d)
 	registerAdminRoutes(d)
+	registerMarketingRoutes(d)
 
 	// New surface, additive: everything above keeps working unchanged.
 	registerV1Routes(d)
+}
+
+func registerMarketingRoutes(d *routeDeps) {
+	d.app.Post("/subscribers/whatsapp", d.subscriber.SubscribeWhatsApp)
+	d.app.Post("/subscribers", d.subscriber.SubscribeWhatsApp)
+	d.app.Post("/cart/track", d.cartTracker.TrackCart)
 }
 
 // protectedGroup returns a route group behind JWT authentication.

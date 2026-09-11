@@ -27,5 +27,16 @@ func registerV1Routes(d *routeDeps) {
 	// every render.
 	v1.Get("/storefront", d.storefront.GetStorefront)
 
+	// Marketing & WhatsApp Lead Capture
+	v1.Post("/subscribers/whatsapp", d.subscriber.SubscribeWhatsApp)
+	v1.Post("/subscribers", d.subscriber.SubscribeWhatsApp)
+
+	// Cart activity tracking & abandoned recovery
+	v1.Post("/cart/track", d.cartTracker.TrackCart)
+	v1.Post("/cart/check-abandoned", d.cartTracker.CheckAndSendAbandonedCartReminders)
+
+	// Admin subscribers list
+	d.admin.Get("/subscribers", d.subscriber.ListSubscribers)
+
 	v1.Get("/health", HealthHandler)
 }

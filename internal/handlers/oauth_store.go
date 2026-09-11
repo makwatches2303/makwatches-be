@@ -44,11 +44,12 @@ func ensureOAuthTempIndex(ctx context.Context, db *mongo.Database) {
 // token is the payload for the post-login exchange code; the CSRF state
 // entry passes "" since it only needs to exist.
 func oauthTempSet(ctx context.Context, db *mongo.Database, key, token string, ttl time.Duration) error {
-	_, err := db.Collection(oauthTempCollection).InsertOne(ctx, oauthTempDoc{
+	opts := options.Replace().SetUpsert(true)
+	_, err := db.Collection(oauthTempCollection).ReplaceOne(ctx, bson.M{"_id": key}, oauthTempDoc{
 		ID:        key,
 		Token:     token,
 		ExpiresAt: time.Now().Add(ttl),
-	})
+	}, opts)
 	return err
 }
 
