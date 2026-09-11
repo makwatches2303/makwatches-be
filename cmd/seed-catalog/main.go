@@ -33,6 +33,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -64,13 +65,24 @@ type batchFile struct {
 	Products []batchProduct `json:"products"`
 }
 
+type seedResult struct {
+	name    string
+	created bool
+	skipped bool
+	err     error
+}
+
 func main() {
 	filePath := flag.String("file", "", "path to a batch JSON file (see cmd/seed-catalog/data/)")
 	dryRun := flag.Bool("dry-run", false, "preview what would be created without writing anything")
+	workers := flag.Int("workers", 8, "number of concurrent workers for image upload and insertion")
 	flag.Parse()
 
 	if *filePath == "" {
 		log.Fatal("-file is required")
+	}
+	if *workers < 1 {
+		*workers = 1
 	}
 
 	raw, err := os.ReadFile(*filePath)
@@ -88,7 +100,7 @@ func main() {
 		log.Fatalf("loading config: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 
 	mongoClient, mongoDB, err := config.InitMongoDB(cfg)
@@ -106,69 +118,100 @@ func main() {
 		}
 	}
 
-	created, skipped, failed := 0, 0, 0
-	for i, p := range batch.Products {
-		log.Printf("[%d/%d] %s — %s", i+1, len(batch.Products), p.Brand, p.Name)
+	jobs := make(chan batchProduct)
+	results := make(chan seedResult)
 
-		exists, err := productExists(ctx, products, p.Name, p.Brand)
-		if err != nil {
-			log.Printf("  ERROR checking for duplicate: %v", err)
+	var wg sync.WaitGroup
+	for w := 0; w < *workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				results <- processProduct(ctx, products, fb, p, *dryRun)
+			}
+		}()
+	}
+
+	go func() {
+		for _, p := range batch.Products {
+			jobs <- p
+		}
+		close(jobs)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	created, skipped, failed := 0, 0, 0
+	done := 0
+	for r := range results {
+		done++
+		if r.err != nil {
+			log.Printf("[%d/%d] FAILED: %s: %v", done, len(batch.Products), r.name, r.err)
 			failed++
 			continue
 		}
-		if exists {
-			log.Printf("  SKIP: already exists")
+		if r.skipped {
 			skipped++
 			continue
 		}
-
-		if *dryRun {
-			log.Printf("  DRY RUN: would upload %d image(s) and insert with price ₹%.0f, discount %.0f%%",
-				len(p.Images), p.Price, p.DiscountPercentage)
-			continue
+		if r.created {
+			created++
 		}
-
-		uploadedURLs, err := uploadImages(ctx, fb, p.Images, p.Brand, p.Name)
-		if err != nil {
-			log.Printf("  ERROR uploading images: %v", err)
-			failed++
-			continue
+		if done%20 == 0 || done == len(batch.Products) {
+			log.Printf("[%d/%d] progress: created=%d skipped=%d failed=%d", done, len(batch.Products), created, skipped, failed)
 		}
-		if len(uploadedURLs) == 0 {
-			log.Printf("  ERROR: no images uploaded successfully, skipping product")
-			failed++
-			continue
-		}
-
-		now := time.Now()
-		discount := p.DiscountPercentage
-		doc := models.Product{
-			Name:               p.Name,
-			Brand:              p.Brand,
-			Description:        p.Description,
-			Price:              p.Price,
-			Category:           p.Category,
-			MainCategory:       p.MainCategory,
-			Subcategory:        p.Subcategory,
-			ImageURL:           uploadedURLs[0],
-			Images:             uploadedURLs,
-			Stock:              p.Stock,
-			DiscountPercentage: &discount,
-			VariantGroupID:     p.VariantGroupID,
-			VariantLabel:       p.VariantLabel,
-			CreatedAt:          now,
-			UpdatedAt:          now,
-		}
-		if _, err := products.InsertOne(ctx, doc); err != nil {
-			log.Printf("  ERROR inserting product: %v", err)
-			failed++
-			continue
-		}
-		log.Printf("  OK: inserted with %d image(s)", len(uploadedURLs))
-		created++
 	}
 
 	log.Printf("Done. created=%d skipped=%d failed=%d", created, skipped, failed)
+}
+
+func processProduct(ctx context.Context, products *mongo.Collection, fb *firebase.FirebaseClient, p batchProduct, dryRun bool) seedResult {
+	exists, err := productExists(ctx, products, p.Name, p.Brand)
+	if err != nil {
+		return seedResult{name: p.Name, err: fmt.Errorf("checking for duplicate: %w", err)}
+	}
+	if exists {
+		return seedResult{name: p.Name, skipped: true}
+	}
+
+	if dryRun {
+		return seedResult{name: p.Name, created: true}
+	}
+
+	uploadedURLs, err := uploadImages(ctx, fb, p.Images, p.Brand, p.Name)
+	if err != nil {
+		return seedResult{name: p.Name, err: fmt.Errorf("uploading images: %w", err)}
+	}
+	if len(uploadedURLs) == 0 {
+		return seedResult{name: p.Name, err: fmt.Errorf("no images uploaded successfully")}
+	}
+
+	now := time.Now()
+	discount := p.DiscountPercentage
+	doc := models.Product{
+		Name:               p.Name,
+		Brand:              p.Brand,
+		Description:        p.Description,
+		Price:              p.Price,
+		Category:           p.Category,
+		MainCategory:       p.MainCategory,
+		Subcategory:        p.Subcategory,
+		ImageURL:           uploadedURLs[0],
+		Images:             uploadedURLs,
+		Stock:              p.Stock,
+		DiscountPercentage: &discount,
+		VariantGroupID:     p.VariantGroupID,
+		VariantLabel:       p.VariantLabel,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if _, err := products.InsertOne(ctx, doc); err != nil {
+		return seedResult{name: p.Name, err: fmt.Errorf("inserting product: %w", err)}
+	}
+	return seedResult{name: p.Name, created: true}
 }
 
 var skuSuffixRe = regexp.MustCompile(`(?i)[-–—]\s*([A-Za-z0-9]{5,15})\s*$`)
