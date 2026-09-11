@@ -1,0 +1,8 @@
+{
+  "id": 12345,
+  "first_name": "MAK",
+  "last_name": "Watches",
+  "email": "api@makwatches.in",
+  "company_id": 6789,
+  "token": "HEADER.PAYLOAD.SIGNATURE"
+}

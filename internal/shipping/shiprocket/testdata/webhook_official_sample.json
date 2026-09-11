@@ -1,0 +1,30 @@
+{
+    "awb": 59629792084,
+    "current_status": "Delivered",
+    "order_id": "13905312",
+    "current_timestamp": "2021-07-02 16:41:59",
+    "etd": "2021-07-02 16:41:59",
+    "current_status_id": 7,
+    "shipment_status": "Delivered",
+    "shipment_status_id": 7,
+    "channel_order_id": "MAK-20210702-001",
+    "channel": "CUSTOM",
+    "courier_name": "Delhivery Surface",
+    "scans": [
+        {
+            "date": "2019-06-25 12:08:00",
+            "activity": "SHIPMENT DELIVERED",
+            "location": "PATIALA"
+        },
+        {
+            "date": "2019-06-25 10:18:00",
+            "activity": "SHIPMENT OUT FOR DELIVERY",
+            "location": "PATIALA"
+        },
+        {
+            "date": "2019-06-24 18:56:00",
+            "activity": "SHIPMENT PICKED UP",
+            "location": "COD PROCESSING CENTRE I"
+        }
+    ]
+}

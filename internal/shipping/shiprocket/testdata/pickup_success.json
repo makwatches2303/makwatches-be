@@ -1,0 +1,12 @@
+{
+  "pickup_status": 1,
+  "response": {
+    "pickup_scheduled_date": "2024-07-02 10:00:00",
+    "pickup_token_number": "PTN9988776655",
+    "status": 1,
+    "others": "",
+    "data": "Pickup has been scheduled"
+  },
+  "pickup_generated": 1,
+  "manifest_url": "https://s3-shiprocket.example/manifests/15151515.pdf"
+}

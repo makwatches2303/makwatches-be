@@ -1,0 +1,89 @@
+{
+  "company_auto_shipment_insurance_setting": false,
+  "currency": "INR",
+  "data": {
+    "available_courier_companies": [
+      {
+        "air_max_weight": "45",
+        "base_weight": "0.5",
+        "blocked": 0,
+        "charge_weight": 0.5,
+        "cod": 1,
+        "cod_charges": 30,
+        "courier_company_id": 51,
+        "courier_name": "Delhivery Surface",
+        "delivery_performance": 4.2,
+        "estimated_delivery_days": "4",
+        "etd": "Jul 01, 2024",
+        "etd_hours": 96,
+        "freight_charge": 54,
+        "is_surface": true,
+        "min_weight": 0.5,
+        "mode": 0,
+        "other_charges": 0,
+        "rate": 54,
+        "rto_charges": 40,
+        "secure_shipment_disabled": false,
+        "surface_max_weight": "80.00",
+        "tracking_performance": 4.0,
+        "zone": "b"
+      },
+      {
+        "air_max_weight": "30",
+        "base_weight": "0.5",
+        "blocked": 0,
+        "charge_weight": 0.5,
+        "cod": 0,
+        "cod_charges": 0,
+        "courier_company_id": 24,
+        "courier_name": "Bluedart Air",
+        "delivery_performance": 4.6,
+        "estimated_delivery_days": "2",
+        "etd": "Jun 29, 2024",
+        "freight_charge": 96,
+        "is_surface": false,
+        "min_weight": 0.5,
+        "mode": "Air",
+        "other_charges": 4,
+        "rate": 0,
+        "secure_shipment_disabled": false,
+        "zone": "b"
+      },
+      {
+        "blocked": 1,
+        "cod": 1,
+        "courier_company_id": 99,
+        "courier_name": "Blocked Courier",
+        "estimated_delivery_days": "3",
+        "etd": "Jun 30, 2024",
+        "freight_charge": 40,
+        "rate": 40
+      },
+      {
+        "blocked": 0,
+        "cod": 1,
+        "courier_company_id": 0,
+        "courier_name": "No Id Courier",
+        "rate": 45
+      },
+      {
+        "blocked": 0,
+        "cod": 1,
+        "courier_company_id": 77,
+        "courier_name": "Zero Rate Courier",
+        "estimated_delivery_days": "",
+        "etd": "",
+        "freight_charge": 0,
+        "cod_charges": 0,
+        "other_charges": 0,
+        "rate": 0
+      }
+    ],
+    "child_courier_id": null,
+    "is_recommendation_enabled": 1,
+    "recommended_by": { "id": 3, "title": "Recommended by Shiprocket" },
+    "recommended_courier_company_id": 51,
+    "shiprocket_recommended_courier_id": 24
+  },
+  "status": 200
+}

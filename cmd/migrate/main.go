@@ -96,10 +96,25 @@ type Product struct {
 }
 
 func main() {
-	// Get MongoDB URI from environment
+	// Connection details come from the environment only.
+	//
+	// This used to fall back to a hardcoded production connection string,
+	// credential included, which meant the secret lived in git history and
+	// that running the tool with no configuration silently targeted the live
+	// database. Both env var names are accepted because the rest of the
+	// application reads MONGO_URI while this tool historically read
+	// MONGODB_URI -- a mismatch that made the production fallback the norm.
 	mongoURI := os.Getenv("MONGODB_URI")
 	if mongoURI == "" {
-		mongoURI = "mongodb+srv://mananparmar23:9LduGU7lb2D0pgjy@manan.t9lsnek.mongodb.net/makwatches?retryWrites=true&w=majority"
+		mongoURI = os.Getenv("MONGO_URI")
+	}
+	if mongoURI == "" {
+		log.Fatal("MONGO_URI (or MONGODB_URI) must be set; refusing to guess a database")
+	}
+
+	dbName := os.Getenv("DATABASE_NAME")
+	if dbName == "" {
+		log.Fatal("DATABASE_NAME must be set; refusing to default to the production database")
 	}
 
 	// Connect to MongoDB
@@ -110,7 +125,7 @@ func main() {
 	}
 	defer client.Disconnect(ctx)
 
-	db := client.Database("makwatches")
+	db := client.Database(dbName)
 	heroCollection := db.Collection("hero_slides")
 	collectionFeaturesCollection := db.Collection("home_collection_features")
 	productsCollection := db.Collection("products")

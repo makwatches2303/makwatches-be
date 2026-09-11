@@ -83,13 +83,36 @@ func (db *DBClient) Collections() struct {
 	}
 }
 
+// EnsureOrderIndexes creates the payment uniqueness guard on orders.
+//
+// A captured Razorpay payment may settle exactly one order. Checkout also
+// checks for reuse before inserting, but that check and the insert are not
+// atomic: two simultaneous submissions of the same payment would both pass it.
+// The unique index is what actually settles the race.
+//
+// Sparse, so the COD orders that carry no razorpay_payment_id are skipped
+// rather than colliding on a missing field. Additive: no document is modified.
+func (db *DBClient) EnsureOrderIndexes(ctx context.Context) error {
+	if db == nil || db.MongoDB == nil {
+		return nil
+	}
+	_, err := db.MongoDB.Collection("orders").Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "payment_info.razorpay_payment_id", Value: 1}},
+		Options: options.Index().
+			SetUnique(true).
+			SetSparse(true).
+			SetName("uniq_razorpay_payment_id"),
+	})
+	return err
+}
+
 // CacheGet retrieves data from Redis cache
 func (db *DBClient) CacheGet(ctx context.Context, key string, dest interface{}) error {
 	// Check if Redis is available
 	if db.Redis == nil {
 		return errors.New("redis not available")
 	}
-	
+
 	val, err := db.Redis.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -107,7 +130,7 @@ func (db *DBClient) CacheSet(ctx context.Context, key string, value interface{},
 	if db.Redis == nil {
 		return nil // Silently skip if Redis is not available
 	}
-	
+
 	data, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -122,7 +145,7 @@ func (db *DBClient) CacheDel(ctx context.Context, keys ...string) error {
 	if db.Redis == nil {
 		return nil // Silently skip if Redis is not available
 	}
-	
+
 	return db.Redis.Del(ctx, keys...).Err()
 }
 

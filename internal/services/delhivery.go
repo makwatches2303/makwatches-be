@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -634,6 +635,61 @@ func (s *DelhiveryService) CancelShipment(waybill string) error {
 
 	log.Printf("[DELHIVERY-CANCEL] ✅ Shipment %s cancelled successfully", waybill)
 	return nil
+}
+
+// FetchPackingSlip downloads the label/packing slip for a waybill.
+//
+// This exists because the packing-slip endpoint requires our API token in a
+// header: the URL alone is useless to a browser, so handing it to the client
+// (as the earlier implementation did) produced a 401 for the operator and
+// would have leaked the token had it been attached. The document is fetched
+// server-side instead and streamed from an authenticated MAK endpoint.
+func (s *DelhiveryService) FetchPackingSlip(ctx context.Context, waybill string) ([]byte, string, error) {
+	if strings.TrimSpace(waybill) == "" {
+		return nil, "", fmt.Errorf("waybill is required to fetch a packing slip")
+	}
+
+	apiURL := fmt.Sprintf("%s/api/p/packing_slip?wbns=%s&pdf=true",
+		s.config.BaseURL, url.QueryEscape(waybill))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create packing slip request: %w", err)
+	}
+	req.Header.Set("Authorization", fmt.Sprintf("Token %s", s.config.APIToken))
+	req.Header.Set("Accept", "application/pdf, application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to fetch packing slip: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Bounded read: a proxy error page must not be able to exhaust memory.
+	const maxSlipBytes = 16 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSlipBytes))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read packing slip: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("packing slip request returned %d", resp.StatusCode)
+	}
+	if len(body) == 0 {
+		return nil, "", fmt.Errorf("packing slip was empty")
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	// Delhivery answers with JSON (carrying a nested PDF link or an error)
+	// when it cannot render the slip directly. Reporting that as a PDF would
+	// hand the operator a corrupt download.
+	if strings.Contains(strings.ToLower(contentType), "json") {
+		return nil, "", fmt.Errorf("delhivery did not return a printable slip: %s",
+			strings.TrimSpace(string(body[:min(256, len(body))])))
+	}
+	if contentType == "" {
+		contentType = "application/pdf"
+	}
+	return body, contentType, nil
 }
 
 // GenerateWaybill generates a waybill for future use (optional)
