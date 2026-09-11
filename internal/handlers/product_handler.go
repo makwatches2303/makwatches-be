@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -106,6 +107,7 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	subcategory := c.Query("subcategory")
 	minPriceStr := c.Query("minPrice")
 	maxPriceStr := c.Query("maxPrice")
+	search := strings.TrimSpace(c.Query("q"))
 	sortBy := c.Query("sortBy", "createdAt") // Default sort by createdAt
 	order := c.Query("order", "desc")        // Default order desc
 	pageStr := c.Query("page", "1")
@@ -153,6 +155,18 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 		}
 	}
 
+	// Free-text search across name/brand -- used by the admin product table,
+	// which otherwise has no way to filter beyond category/price. Case
+	// insensitive substring match, same regex-escape discipline as the rest
+	// of this handler's regex filters use.
+	if search != "" {
+		pattern := regexp.QuoteMeta(search)
+		filter["$or"] = bson.A{
+			bson.M{"name": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"brand": bson.M{"$regex": pattern, "$options": "i"}},
+		}
+	}
+
 	// Determine sort direction
 	sortDirection := 1 // ascending
 	if order == "desc" {
@@ -170,8 +184,30 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	// combination at once via BumpCacheVersion, instead of a write path
 	// having to guess this exact key -- see CacheVersion's doc comment.
 	cacheVersion := h.DB.CacheVersion(ctx, "products")
-	cacheKey := fmt.Sprintf("products:v%d:%s:%s:%s:%s:%s:%d:%d",
-		cacheVersion, category, minPriceStr, maxPriceStr, sortBy, order, page, limit)
+	cacheKey := fmt.Sprintf("products:v%d:%s:%s:%s:%s:%s:%s:%d:%d",
+		cacheVersion, category, minPriceStr, maxPriceStr, search, sortBy, order, page, limit)
+
+	collection := h.DB.Collections().Products
+
+	// Count total matching documents for pagination info -- run on every
+	// request, cache hit or miss. This is the cheap half of the query (an
+	// index-covered count vs. the full document fetch+decode), and the
+	// admin product table needs an accurate total/pages on every response,
+	// including cached ones, to paginate correctly.
+	total, err := collection.CountDocuments(ctx, filter)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to count products",
+			"error":   err.Error(),
+		})
+	}
+	meta := fiber.Map{
+		"page":  page,
+		"limit": limit,
+		"total": total,
+		"pages": (total + int64(limit) - 1) / int64(limit), // ceiling division
+	}
 
 	var products []models.Product
 	err = h.DB.CacheGet(ctx, cacheKey, &products)
@@ -182,23 +218,7 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 			"success": true,
 			"message": "Products retrieved from cache",
 			"data":    products,
-			"meta": fiber.Map{
-				"page":  page,
-				"limit": limit,
-			},
-		})
-	}
-
-	// Cache miss, get from database
-	collection := h.DB.Collections().Products
-
-	// Count total matching documents for pagination info
-	total, err := collection.CountDocuments(ctx, filter)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"message": "Failed to count products",
-			"error":   err.Error(),
+			"meta":    meta,
 		})
 	}
 
@@ -232,12 +252,7 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 		"success": true,
 		"message": "Products retrieved successfully",
 		"data":    products,
-		"meta": fiber.Map{
-			"page":  page,
-			"limit": limit,
-			"total": total,
-			"pages": (total + int64(limit) - 1) / int64(limit), // ceiling division
-		},
+		"meta":    meta,
 	})
 }
 
