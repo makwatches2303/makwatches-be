@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -154,9 +156,31 @@ func main() {
 	log.Printf("Done. created=%d skipped=%d failed=%d", created, skipped, failed)
 }
 
+var skuSuffixRe = regexp.MustCompile(`(?i)[-–—]\s*([A-Za-z0-9]{5,15})\s*$`)
+
 func productExists(ctx context.Context, coll *mongo.Collection, name, brand string) (bool, error) {
-	count, err := coll.CountDocuments(ctx, bson.M{"name": name, "brand": brand}, options.Count().SetLimit(1))
-	return count > 0, err
+	// 1. Exact case-insensitive match on name + brand
+	count, err := coll.CountDocuments(ctx, bson.M{
+		"brand": bson.M{"$regex": "^" + regexp.QuoteMeta(strings.TrimSpace(brand)) + "$", "$options": "i"},
+		"name":  bson.M{"$regex": "^" + regexp.QuoteMeta(strings.TrimSpace(name)) + "$", "$options": "i"},
+	}, options.Count().SetLimit(1))
+	if err != nil || count > 0 {
+		return count > 0, err
+	}
+
+	// 2. Trailing SKU match for that brand (e.g. "... - 6296SM01")
+	if m := skuSuffixRe.FindStringSubmatch(strings.TrimSpace(name)); len(m) > 1 {
+		sku := m[1]
+		skuCount, err := coll.CountDocuments(ctx, bson.M{
+			"brand": bson.M{"$regex": "^" + regexp.QuoteMeta(strings.TrimSpace(brand)) + "$", "$options": "i"},
+			"name":  bson.M{"$regex": regexp.QuoteMeta(sku), "$options": "i"},
+		}, options.Count().SetLimit(1))
+		if err != nil || skuCount > 0 {
+			return skuCount > 0, err
+		}
+	}
+
+	return false, nil
 }
 
 // uploadImages downloads and validates each source URL (see
