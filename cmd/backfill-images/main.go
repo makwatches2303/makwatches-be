@@ -35,12 +35,9 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -48,6 +45,7 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imagefetch"
 )
 
 // brokenImagePrefix is the signature of the dead VPS's upload path. Only
@@ -244,78 +242,20 @@ func main() {
 // (img.fossil.in does this); for those, fetch the bytes through the Browser
 // MCP tool as base64 first, write them to a local file, and point the
 // bucket pool's "images" entry at "file://" + that path.
+//
+// Every image is fetched and validated by internal/imagefetch, which
+// rejects anything below its minimum resolution -- see that package's doc
+// comment for why, and for where to find a source's real full-resolution
+// original instead of its thumbnail strip.
 func downloadAndUpload(ctx context.Context, fb *firebase.FirebaseClient, srcURL, brand, name string, index int) (string, error) {
-	var body []byte
-
-	if localPath, ok := strings.CutPrefix(srcURL, "file://"); ok {
-		var err error
-		body, err = os.ReadFile(localPath)
-		if err != nil {
-			return "", fmt.Errorf("reading local file failed: %w", err)
-		}
-	} else {
-		client := &http.Client{Timeout: 30 * time.Second}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
-		if err != nil {
-			return "", fmt.Errorf("bad request: %w", err)
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("download failed: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("download returned %s", resp.Status)
-		}
-		body, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("reading body failed: %w", err)
-		}
+	res, err := imagefetch.Fetch(ctx, srcURL)
+	if err != nil {
+		return "", err
 	}
-
-	ext := extFromURL(srcURL)
-	filename := fmt.Sprintf("%s-%s-%d%s", slugify(brand), slugify(name), index, ext)
-	publicURL, err := fb.UploadFile(ctx, bytes.NewReader(body), filename)
+	filename := fmt.Sprintf("%s-%s-%d%s", imagefetch.Slugify(brand), imagefetch.Slugify(name), index, res.Ext)
+	publicURL, err := fb.UploadFile(ctx, bytes.NewReader(res.Body), filename)
 	if err != nil {
 		return "", fmt.Errorf("firebase upload failed: %w", err)
 	}
 	return publicURL, nil
-}
-
-func extFromURL(url string) string {
-	u := strings.SplitN(url, "?", 2)[0]
-	switch {
-	case strings.HasSuffix(strings.ToLower(u), ".png"):
-		return ".png"
-	case strings.HasSuffix(strings.ToLower(u), ".webp"):
-		return ".webp"
-	default:
-		return ".jpg"
-	}
-}
-
-func slugify(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash {
-				b.WriteRune('-')
-				lastDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > 60 {
-		out = out[:60]
-	}
-	return out
 }

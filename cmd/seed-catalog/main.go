@@ -18,11 +18,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -31,6 +28,7 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imagefetch"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
 
@@ -161,41 +159,21 @@ func productExists(ctx context.Context, coll *mongo.Collection, name, brand stri
 	return count > 0, err
 }
 
-// uploadImages downloads each source URL and re-uploads it to Firebase
-// Storage. A single failed image is logged and skipped rather than failing
-// the whole product -- a product with 2 of 4 images is still worth having.
+// uploadImages downloads and validates each source URL (see
+// internal/imagefetch -- rejects thumbnails below its minimum resolution)
+// and re-uploads it to Firebase Storage. A single rejected/failed image is
+// logged and skipped rather than failing the whole product -- a product
+// with 2 of 4 images is still worth having.
 func uploadImages(ctx context.Context, fb *firebase.FirebaseClient, urls []string, brand, name string) ([]string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
 	var uploaded []string
 	for i, url := range urls {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		res, err := imagefetch.Fetch(ctx, url)
 		if err != nil {
-			log.Printf("    image %d: bad request: %v", i+1, err)
+			log.Printf("    image %d rejected: %v", i+1, err)
 			continue
 		}
-		// A default Go User-Agent is blocked by some retail sites' CDNs/WAFs.
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			log.Printf("    image %d: download failed: %v", i+1, err)
-			continue
-		}
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			log.Printf("    image %d: download returned %s", i+1, resp.Status)
-			continue
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			log.Printf("    image %d: reading body failed: %v", i+1, err)
-			continue
-		}
-
-		ext := extFromURL(url)
-		filename := fmt.Sprintf("%s-%s-%d%s", slugify(brand), slugify(name), i+1, ext)
-		publicURL, err := fb.UploadFile(ctx, bytes.NewReader(body), filename)
+		filename := fmt.Sprintf("%s-%s-%d%s", imagefetch.Slugify(brand), imagefetch.Slugify(name), i+1, res.Ext)
+		publicURL, err := fb.UploadFile(ctx, bytes.NewReader(res.Body), filename)
 		if err != nil {
 			log.Printf("    image %d: firebase upload failed: %v", i+1, err)
 			continue
@@ -203,39 +181,4 @@ func uploadImages(ctx context.Context, fb *firebase.FirebaseClient, urls []strin
 		uploaded = append(uploaded, publicURL)
 	}
 	return uploaded, nil
-}
-
-func extFromURL(url string) string {
-	u := strings.SplitN(url, "?", 2)[0]
-	switch {
-	case strings.HasSuffix(strings.ToLower(u), ".png"):
-		return ".png"
-	case strings.HasSuffix(strings.ToLower(u), ".webp"):
-		return ".webp"
-	default:
-		return ".jpg"
-	}
-}
-
-func slugify(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash {
-				b.WriteRune('-')
-				lastDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > 60 {
-		out = out[:60]
-	}
-	return out
 }

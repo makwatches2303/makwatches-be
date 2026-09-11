@@ -33,9 +33,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -47,12 +45,20 @@ import (
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imagefetch"
 )
 
 type harvestItem struct {
 	ProductID   string   `json:"product_id"`
 	ProductName string   `json:"product_name,omitempty"`
-	Images      []string `json:"images"`
+	// Brand names the Firebase filename this item's images are stored
+	// under. Optional: falls back to the first word of ProductName, since
+	// most catalog names already start with the brand ("Fastrack
+	// Streetwear…", "Titan Karishma…"). Get this wrong and nothing breaks
+	// except the object's filename being cosmetically off -- it's not read
+	// back from anywhere, just makes the bucket easier for a human to browse.
+	Brand  string   `json:"brand,omitempty"`
+	Images []string `json:"images"`
 }
 
 type result struct {
@@ -169,15 +175,20 @@ func processItem(ctx context.Context, products *mongo.Collection, fb *firebase.F
 		return result{name: name, err: fmt.Errorf("no images provided")}
 	}
 
+	brand := item.Brand
+	if brand == "" {
+		brand = strings.SplitN(strings.TrimSpace(name), " ", 2)[0]
+	}
+
 	var uploaded []string
 	for k, srcURL := range item.Images {
 		if dryRun {
 			uploaded = append(uploaded, srcURL)
 			continue
 		}
-		fbURL, err := downloadAndUpload(ctx, fb, srcURL, "fastrack", name, k+1)
+		fbURL, err := downloadAndUpload(ctx, fb, srcURL, brand, name, k+1)
 		if err != nil {
-			log.Printf("  [%s] image %d upload failed (%s): %v", name, k+1, srcURL, err)
+			log.Printf("  [%s] image %d rejected (%s): %v", name, k+1, srcURL, err)
 			continue
 		}
 		uploaded = append(uploaded, fbURL)
@@ -203,86 +214,18 @@ func processItem(ctx context.Context, products *mongo.Collection, fb *firebase.F
 	return result{name: name, updated: true}
 }
 
-// downloadAndUpload fetches a single source image and re-uploads it to
-// Firebase Storage, returning the resulting public URL. Mirrors
-// cmd/backfill-images' helper of the same name (same User-Agent workaround
-// for retail-site WAFs, same content-type-from-extension logic).
-//
-// A srcURL of the form "file:///abs/path/to/image.jpg" is read from local
-// disk instead of downloaded -- an escape hatch for CDNs that block plain
-// HTTP clients on TLS/bot-detection grounds even with a browser User-Agent.
+// downloadAndUpload fetches and validates a single source image (see
+// internal/imagefetch -- rejects thumbnails below its minimum resolution)
+// and re-uploads it to Firebase Storage, returning the resulting public URL.
 func downloadAndUpload(ctx context.Context, fb *firebase.FirebaseClient, srcURL, brand, name string, index int) (string, error) {
-	var body []byte
-
-	if localPath, ok := strings.CutPrefix(srcURL, "file://"); ok {
-		var err error
-		body, err = os.ReadFile(localPath)
-		if err != nil {
-			return "", fmt.Errorf("reading local file failed: %w", err)
-		}
-	} else {
-		client := &http.Client{Timeout: 30 * time.Second}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, srcURL, nil)
-		if err != nil {
-			return "", fmt.Errorf("bad request: %w", err)
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("download failed: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("download returned %s", resp.Status)
-		}
-		body, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("reading body failed: %w", err)
-		}
+	res, err := imagefetch.Fetch(ctx, srcURL)
+	if err != nil {
+		return "", err
 	}
-
-	ext := extFromURL(srcURL)
-	filename := fmt.Sprintf("%s-%s-%d%s", slugify(brand), slugify(name), index, ext)
-	publicURL, err := fb.UploadFile(ctx, bytes.NewReader(body), filename)
+	filename := fmt.Sprintf("%s-%s-%d%s", imagefetch.Slugify(brand), imagefetch.Slugify(name), index, res.Ext)
+	publicURL, err := fb.UploadFile(ctx, bytes.NewReader(res.Body), filename)
 	if err != nil {
 		return "", fmt.Errorf("firebase upload failed: %w", err)
 	}
 	return publicURL, nil
-}
-
-func extFromURL(url string) string {
-	u := strings.SplitN(url, "?", 2)[0]
-	switch {
-	case strings.HasSuffix(strings.ToLower(u), ".png"):
-		return ".png"
-	case strings.HasSuffix(strings.ToLower(u), ".webp"):
-		return ".webp"
-	default:
-		return ".jpg"
-	}
-}
-
-func slugify(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastDash = false
-		default:
-			if !lastDash {
-				b.WriteRune('-')
-				lastDash = true
-			}
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > 60 {
-		out = out[:60]
-	}
-	return out
 }
