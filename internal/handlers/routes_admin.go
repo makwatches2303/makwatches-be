@@ -13,6 +13,15 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminCategoryRoutes(d)
 	registerAdminShippingRoutes(d)
 	registerAdminStorefrontRoutes(d)
+	registerAdminAnalyticsRoutes(d)
+}
+
+// registerAdminAnalyticsRoutes wires the admin dashboard's aggregate
+// figures -- stat tiles, order status breakdown, recent orders and orders
+// needing attention, computed server-side instead of by fetching every
+// order into the browser.
+func registerAdminAnalyticsRoutes(d *routeDeps) {
+	d.admin.Get("/analytics/summary", d.analytics.GetDashboardSummary)
 }
 
 // registerAdminStorefrontRoutes wires the storefront presentation layer: the

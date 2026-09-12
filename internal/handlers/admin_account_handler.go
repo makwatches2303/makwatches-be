@@ -4,6 +4,8 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Account is a light representation for admin listing
@@ -25,27 +28,77 @@ type AdminAccountHandler struct {
 	DB *database.DBClient
 }
 
+// GetAllAccounts lists user accounts, paginated (admin only).
+//
+// Previously fetched every user in the database and returned a bare JSON
+// array with no envelope -- fine for a handful of accounts, not at scale,
+// and inconsistent with every other admin list endpoint. Optional query
+// params: page, limit (defaults 1/20, matching GetProducts/GetAllOrders) and
+// q (free-text, matches name or email).
 func (h *AdminAccountHandler) GetAllAccounts(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	page, err := strconv.Atoi(c.Query("page", "1"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(c.Query("limit", "20"))
+	if err != nil || limit < 1 {
+		limit = 20
+	}
+
+	filter := bson.M{}
+	if search := c.Query("q"); search != "" {
+		pattern := regexp.QuoteMeta(search)
+		filter["$or"] = bson.A{
+			bson.M{"name": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"email": bson.M{"$regex": pattern, "$options": "i"}},
+		}
+	}
+
 	collection := h.DB.MongoDB.Collection("users")
-	cursor, err := collection.Find(ctx, bson.M{})
+
+	total, err := collection.CountDocuments(ctx, filter)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch accounts",
+			"success": false,
+			"message": "Failed to count accounts",
+		})
+	}
+	meta := fiber.Map{
+		"page":  page,
+		"limit": limit,
+		"total": total,
+		"pages": (total + int64(limit) - 1) / int64(limit),
+	}
+
+	opts := options.Find().
+		SetSort(bson.D{{Key: "_id", Value: -1}}).
+		SetSkip(int64((page - 1) * limit)).
+		SetLimit(int64(limit))
+	cursor, err := collection.Find(ctx, filter, opts)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to fetch accounts",
 		})
 	}
 	defer cursor.Close(ctx)
 
-	var accounts []Account
+	accounts := []Account{}
 	if err := cursor.All(ctx, &accounts); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to parse accounts",
+			"success": false,
+			"message": "Failed to parse accounts",
 		})
 	}
 
-	return c.JSON(accounts)
+	return c.JSON(fiber.Map{
+		"success": true,
+		"data":    accounts,
+		"meta":    meta,
+	})
 }
 
 // DeleteAccount removes a user and (best-effort) all associated data across collections.
@@ -137,10 +190,4 @@ func (h *AdminAccountHandler) DeleteAccount(c *fiber.Ctx) error {
 			"summary": summary,
 		},
 	})
-}
-func GetAllAccounts(db *mongo.Database) fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		// TODO: Implement logic to fetch accounts from db
-		return c.SendString("All accounts endpoint")
-	}
 }

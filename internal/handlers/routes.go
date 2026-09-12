@@ -63,6 +63,7 @@ type routeDeps struct {
 	storefront  *StorefrontHandler
 	subscriber  *SubscriberHandler
 	cartTracker *CartTrackerHandler
+	analytics   *AnalyticsHandler
 }
 
 // SetupRoutes configures all application routes.
@@ -110,6 +111,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		settings:    NewSettingsHandler(db.MongoDB, fb),
 		catalogV1:   NewCatalogV1Handler(db, cfg, media),
 		storefront:  NewStorefrontHandler(db, cfg),
+		analytics:   NewAnalyticsHandler(db, cfg),
 	}
 
 	wa := whatsapp.NewClient(cfg)

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -939,7 +941,13 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 	})
 }
 
-// GetAllOrders returns all orders (admin only)
+// GetAllOrders returns orders, paginated (admin only).
+//
+// Previously fetched every order in the database on every call -- fine at a
+// few hundred orders, not at scale. Optional query params: page, limit
+// (defaults 1/20, same convention as GetProducts), status (exact match) and
+// q (free-text, matches order number, customer name, or shipping-address
+// name).
 func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	ctx := c.Context()
 	// Only admin can access
@@ -950,9 +958,51 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 			"message": "Not authorized",
 		})
 	}
+
+	page, err := strconv.Atoi(c.Query("page", "1"))
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(c.Query("limit", "20"))
+	if err != nil || limit < 1 {
+		limit = 20
+	}
+
+	filter := bson.M{}
+	if status := c.Query("status"); status != "" {
+		filter["status"] = status
+	}
+	if search := c.Query("q"); search != "" {
+		pattern := regexp.QuoteMeta(search)
+		filter["$or"] = bson.A{
+			bson.M{"order_number": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"customer_name": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"shipping_address.name": bson.M{"$regex": pattern, "$options": "i"}},
+		}
+	}
+
 	orderCollection := h.DB.Collections().Orders
-	opts := options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}})
-	cursor, err := orderCollection.Find(ctx, bson.M{}, opts)
+
+	total, err := orderCollection.CountDocuments(ctx, filter)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to count orders",
+			"error":   err.Error(),
+		})
+	}
+	meta := fiber.Map{
+		"page":  page,
+		"limit": limit,
+		"total": total,
+		"pages": (total + int64(limit) - 1) / int64(limit),
+	}
+
+	opts := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetSkip(int64((page - 1) * limit)).
+		SetLimit(int64(limit))
+	cursor, err := orderCollection.Find(ctx, filter, opts)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -1035,5 +1085,6 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 		"success": true,
 		"message": "All orders retrieved",
 		"data":    respOrders,
+		"meta":    meta,
 	})
 }
