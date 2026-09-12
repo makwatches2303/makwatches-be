@@ -254,3 +254,70 @@ func (h *SettingsHandler) UploadLogo() fiber.Handler {
 		})
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shipping Tier Config
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GetShippingTierConfig returns the current delivery surcharge tiers.
+// GET /admin/settings/shipping-tiers
+func (h *SettingsHandler) GetShippingTierConfig() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		col := h.DB.Collection(models.ShippingTierConfigCollection)
+		var cfg models.ShippingTierConfig
+		err := col.FindOne(c.Context(), bson.M{}).Decode(&cfg)
+		if err == mongo.ErrNoDocuments {
+			cfg = models.DefaultShippingTierConfig()
+		} else if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false, "message": "Could not load shipping tier config",
+			})
+		}
+		return c.JSON(fiber.Map{"success": true, "data": cfg})
+	}
+}
+
+// UpdateShippingTierConfig saves new delivery surcharge tiers.
+// PUT /admin/settings/shipping-tiers
+func (h *SettingsHandler) UpdateShippingTierConfig() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			AirCharge     *float64 `json:"airCharge"`
+			ExpressCharge *float64 `json:"expressCharge"`
+			SurfaceCharge *float64 `json:"surfaceCharge"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false, "message": "Invalid request body",
+			})
+		}
+
+		set := bson.M{"updated_at": time.Now()}
+		if body.AirCharge != nil {
+			set["air_charge"] = *body.AirCharge
+		}
+		if body.ExpressCharge != nil {
+			set["express_charge"] = *body.ExpressCharge
+		}
+		if body.SurfaceCharge != nil {
+			set["surface_charge"] = *body.SurfaceCharge
+		}
+
+		col := h.DB.Collection(models.ShippingTierConfigCollection)
+		opts := options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After)
+		var updated models.ShippingTierConfig
+		if err := col.FindOneAndUpdate(
+			c.Context(), bson.M{}, bson.M{"$set": set}, opts,
+		).Decode(&updated); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false, "message": "Could not save shipping tier config",
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "Shipping tier charges updated",
+			"data":    updated,
+		})
+	}
+}

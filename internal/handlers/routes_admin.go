@@ -62,6 +62,9 @@ func registerAdminSettingsRoutes(d *routeDeps) {
 	d.admin.Get("/settings", d.settings.GetSettings())
 	d.admin.Put("/settings", d.settings.UpdateSettings())
 	d.admin.Post("/settings/logo", d.settings.UploadLogo())
+	// Shipping tier charge configuration
+	d.admin.Get("/settings/shipping-tiers", d.settings.GetShippingTierConfig())
+	d.admin.Put("/settings/shipping-tiers", d.settings.UpdateShippingTierConfig())
 }
 
 // registerAdminHomeContentRoutes wires the homepage CMS: hero slides, category

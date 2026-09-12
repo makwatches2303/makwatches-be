@@ -6,6 +6,34 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// ShippingTierConfig stores the admin-controlled delivery surcharge per speed tier.
+// Persisted as a single document (upserted) in collection "shipping_tier_config".
+//
+// Tier logic applied to each option at checkout time:
+//   - Air tier   : EstimatedDeliveryDays <= 2  → AirCharge
+//   - Express tier: EstimatedDeliveryDays <= 3  → ExpressCharge
+//   - Surface tier: EstimatedDeliveryDays >= 4
+//                   or no ETA                   → SurfaceCharge (default 0, free)
+type ShippingTierConfig struct {
+	ID            primitive.ObjectID `bson:"_id,omitempty"   json:"id,omitempty"`
+	AirCharge     float64            `bson:"air_charge"      json:"airCharge"`     // ≤2 days
+	ExpressCharge float64            `bson:"express_charge"  json:"expressCharge"` // ≤3 days
+	SurfaceCharge float64            `bson:"surface_charge"  json:"surfaceCharge"` // 4+ days (usually 0)
+	UpdatedAt     time.Time          `bson:"updated_at"      json:"updatedAt"`
+}
+
+// DefaultShippingTierConfig returns sensible defaults when no admin config exists.
+func DefaultShippingTierConfig() ShippingTierConfig {
+	return ShippingTierConfig{
+		AirCharge:     149,
+		ExpressCharge: 99,
+		SurfaceCharge: 0,
+	}
+}
+
+// ShippingTierConfigCollection is the MongoDB collection name.
+const ShippingTierConfigCollection = "shipping_tier_config"
+
 // Settings represents system settings
 type Settings struct {
 	ID                 primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`

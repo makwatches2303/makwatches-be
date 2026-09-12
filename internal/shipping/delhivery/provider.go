@@ -107,15 +107,30 @@ func (p *Provider) Rates(ctx context.Context, req shipping.RateRequest) ([]shipp
 			"order value exceeds the delhivery COD limit at pincode %s", req.DeliveryPincode)
 	}
 
-	return []shipping.RateOption{{
-		ID:                shipping.OptionID(shipping.ProviderDelhivery, "surface"),
-		Provider:          shipping.ProviderDelhivery,
-		ProviderCourierID: "surface",
-		CourierName:       "Delhivery Surface",
-		Charge:            p.cfg.FlatShippingCharge,
-		CODAvailable:      svc.COD,
-		Mode:              "Surface",
-	}}, nil
+
+	return []shipping.RateOption{
+		{
+			ID:                    shipping.OptionID(shipping.ProviderDelhivery, "express"),
+			Provider:              shipping.ProviderDelhivery,
+			ProviderCourierID:     "express",
+			CourierName:           "Delhivery Express (Insured)",
+			Charge:                p.cfg.FlatShippingCharge,
+			EstimatedDeliveryDays: 3,
+			CODAvailable:          svc.COD,
+			Mode:                  "Express",
+			Recommended:           true,
+		},
+		{
+			ID:                shipping.OptionID(shipping.ProviderDelhivery, "surface"),
+			Provider:          shipping.ProviderDelhivery,
+			ProviderCourierID: "surface",
+			CourierName:       "Delhivery Surface",
+			Charge:            p.cfg.FlatShippingCharge,
+			CODAvailable:      svc.COD,
+			Mode:              "Surface",
+		},
+	}, nil
+
 }
 
 // ResolveDestination names the locality behind a pincode.

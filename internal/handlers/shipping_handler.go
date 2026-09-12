@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
@@ -13,6 +14,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/shipping"
 )
+
 
 // ShippingHandler serves the original flat shipping routes.
 //
@@ -242,6 +244,29 @@ func (h *ShippingHandler) GetCheckoutShippingOptions(c *fiber.Ctx) error {
 		return shippingError(c, err, "checkout shipping options "+pincode)
 	}
 
+	// ── Apply admin-controlled tier charges ──────────────────────────────────
+	// Load the tier config (defaults to ₹149/₹99/Free if not set by admin).
+	tierCfg := models.DefaultShippingTierConfig()
+	if h.DB != nil && h.DB.MongoDB != nil {
+		_ = h.DB.MongoDB.Collection(models.ShippingTierConfigCollection).
+			FindOne(ctx, bson.M{}).Decode(&tierCfg)
+	}
+
+	// Re-price each option according to its delivery speed, then re-sign the
+	// quote token so the charge baked into the token matches what is displayed.
+	now := time.Now()
+	repriced := make([]shipping.QuotedOption, 0, len(result.Options))
+	for _, opt := range result.Options {
+		charge := tierChargeFor(opt.EstimatedDeliveryDays, tierCfg)
+		opt.RateOption.Charge = charge
+		token, signErr := h.Service.Quoter().Sign(opt.RateOption, binding, now)
+		if signErr == nil {
+			opt.Quote = token
+		}
+		repriced = append(repriced, opt)
+	}
+	result.Options = repriced
+
 	return c.JSON(fiber.Map{
 		"success":     true,
 		"serviceable": true,
@@ -253,6 +278,23 @@ func (h *ShippingHandler) GetCheckoutShippingOptions(c *fiber.Ctx) error {
 		"options":     result.Options,
 	})
 }
+
+// tierChargeFor returns the delivery surcharge for an option based on its
+// estimated delivery days, using the admin-configured tier values.
+//
+//   - Air  : 0 < days ≤ 2  → AirCharge
+//   - Express: days ≤ 3    → ExpressCharge
+//   - Surface: days >= 4 or no ETA → SurfaceCharge
+func tierChargeFor(days int, cfg models.ShippingTierConfig) float64 {
+	if days > 0 && days <= 2 {
+		return cfg.AirCharge
+	}
+	if days > 0 && days <= 3 {
+		return cfg.ExpressCharge
+	}
+	return cfg.SurfaceCharge
+}
+
 
 // RetryShipment books a shipment for an order that has none.
 //
