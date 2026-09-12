@@ -29,8 +29,16 @@ const oauthTempCollection = "oauth_tmp"
 // ensureOAuthTempIndex creates the TTL index if it doesn't already exist.
 // Best-effort: a failure here (e.g. no index-creation permission) degrades
 // to entries simply outliving their TTL rather than the app failing to
-// start, since oauthTempConsume also checks ExpiresAt itself.
+// start, since oauthTempConsume also checks ExpiresAt itself. A nil db (a
+// route table built without a real Mongo connection, as the routing tests
+// do) degrades the same way instead of panicking: mongo.Database.Collection
+// dereferences its receiver, so calling it on nil crashes the whole process
+// rather than the one request the "best-effort" comment above is about.
 func ensureOAuthTempIndex(ctx context.Context, db *mongo.Database) {
+	if db == nil {
+		log.Printf("[AUTH] WARNING: skipping oauth_tmp TTL index, no Mongo database configured")
+		return
+	}
 	_, err := db.Collection(oauthTempCollection).Indexes().CreateOne(ctx, mongo.IndexModel{
 		Keys:    bson.D{{Key: "expires_at", Value: 1}},
 		Options: options.Index().SetExpireAfterSeconds(0),
