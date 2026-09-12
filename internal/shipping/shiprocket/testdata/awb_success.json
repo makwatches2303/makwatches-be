@@ -1,0 +1,28 @@
+{
+  "awb_assign_status": 1,
+  "response": {
+    "data": {
+      "courier_company_id": 51,
+      "awb_code": "1491110022334",
+      "cod": 0,
+      "order_id": 16161616,
+      "shipment_id": 15151515,
+      "awb_code_status": 1,
+      "assigned_date_time": {
+        "date": "2024-07-01 12:30:00.000000",
+        "timezone_type": 3,
+        "timezone": "Asia/Kolkata"
+      },
+      "applied_weight": 0.5,
+      "company_id": 6789,
+      "courier_name": "Delhivery Surface",
+      "child_courier_name": null,
+      "protect_shipment": 0,
+      "pickup_scheduled_date": "2024-07-02 10:00:00",
+      "routing_code": "",
+      "invoice_no": "",
+      "transporter_id": "",
+      "transporter_name": ""
+    }
+  }
+}

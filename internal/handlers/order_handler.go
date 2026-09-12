@@ -2,9 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -24,70 +21,51 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/services"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/shipment"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/shipping"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 )
 
 // OrderHandler handles order related requests
 type OrderHandler struct {
-	DB               *database.DBClient
-	Config           *config.Config
-	DelhiveryService *services.DelhiveryService
-	// ShipmentQueue is nil under the non-Lambda entrypoint (cmd/api) and in
-	// local dev -- Checkout falls back to a synchronous Delhivery call.
-	ShipmentQueue *queue.ShipmentQueue
+	DB       *database.DBClient
+	Config   *config.Config
+	// Shipping is the provider-neutral shipping service. The handler holds no
+	// carrier client of its own: booking a parcel at checkout and booking one
+	// from the admin retry endpoint now run the same code, against whichever
+	// provider is configured.
+	Shipping *shipping.Service
 }
 
-// NewOrderHandler creates a new instance of OrderHandler
-func NewOrderHandler(db *database.DBClient, cfg *config.Config, shipmentQueue *queue.ShipmentQueue) *OrderHandler {
-	log.Printf("[ORDER_HANDLER] Initializing OrderHandler with Delhivery config...")
-	log.Printf("[ORDER_HANDLER] Delhivery API Token: %s (length: %d)", maskToken(cfg.DelhiveryAPIToken), len(cfg.DelhiveryAPIToken))
-	log.Printf("[ORDER_HANDLER] Delhivery Base URL: %s", cfg.DelhiveryBaseURL)
-	log.Printf("[ORDER_HANDLER] Delhivery Pickup Location: %s", cfg.DelhiveryPickupLocation)
-
-	// Initialize Delhivery service
-	delhiveryConfig := services.DelhiveryConfig{
-		APIToken:       cfg.DelhiveryAPIToken,
-		BaseURL:        cfg.DelhiveryBaseURL,
-		PickupLocation: cfg.DelhiveryPickupLocation,
-		SellerName:     cfg.DelhiverySellerName,
-		SellerPhone:    cfg.DelhiverySellerPhone,
-		SellerAddress:  cfg.DelhiverySellerAddress,
-		SellerCity:     cfg.DelhiverySellerCity,
-		SellerState:    cfg.DelhiverySellerState,
-		SellerPincode:  cfg.DelhiverySellerPincode,
-		ReturnAddress:  cfg.DelhiveryReturnAddress,
-		ReturnCity:     cfg.DelhiveryReturnCity,
-		ReturnState:    cfg.DelhiveryReturnState,
-		ReturnPincode:  cfg.DelhiveryReturnPincode,
-		ReturnPhone:    cfg.DelhiveryReturnPhone,
-	}
-
-	delhiveryService := services.NewDelhiveryService(delhiveryConfig)
-	if delhiveryService != nil {
-		log.Printf("[ORDER_HANDLER] ✅ DelhiveryService initialized successfully")
-		log.Printf("[ORDER_HANDLER] 🏪 Pickup Config: Location='%s', Address='%s', City='%s'",
-			cfg.DelhiveryPickupLocation, cfg.DelhiverySellerAddress, cfg.DelhiverySellerCity)
-	} else {
-		log.Printf("[ORDER_HANDLER] ⚠️ DelhiveryService is nil!")
-	}
-
+// NewOrderHandler creates a new instance of OrderHandler.
+//
+// The shipping service is injected rather than constructed here, so there is
+// exactly one carrier client per process instead of one per handler.
+func NewOrderHandler(db *database.DBClient, cfg *config.Config, shippingSvc *shipping.Service) *OrderHandler {
 	return &OrderHandler{
-		DB:               db,
-		Config:           cfg,
-		DelhiveryService: delhiveryService,
-		ShipmentQueue:    shipmentQueue,
+		DB:       db,
+		Config:   cfg,
+		Shipping: shippingSvc,
 	}
 }
 
-// maskToken masks the API token for logging (shows first 4 and last 4 chars)
-func maskToken(token string) string {
-	if len(token) <= 8 {
-		return "***"
+// rateChoiceFrom converts a verified quote into the persisted snapshot.
+//
+// Returns nil for an order placed without a delivery selection, so the field
+// stays absent rather than recording a zero-charge choice nobody made.
+func rateChoiceFrom(q *shipping.VerifiedQuote) *models.RateChoice {
+	if q == nil {
+		return nil
 	}
-	return token[:4] + "..." + token[len(token)-4:]
+	return &models.RateChoice{
+		OptionID:              shipping.OptionID(q.Provider, q.CourierID),
+		Provider:              q.Provider,
+		ProviderCourierID:     q.CourierID,
+		CourierName:           q.CourierName,
+		Charge:                q.Charge,
+		EstimatedDeliveryDays: q.EstimatedDeliveryDays,
+		ETD:                   q.ETD,
+		CODAvailable:          q.CODAvailable,
+	}
 }
 
 // generateOrderNumber generates a human-readable order number like MAK-20251214-A1B2
@@ -261,16 +239,124 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		req.CouponCode = coupon.Code
 	}
 
-	// Verify Razorpay signature if method is razorpay
+	// The goods total after discount, before delivery.
+	goodsTotal := total
+	isCOD := req.PaymentInfo.Method == "cod"
+
+	// Resolve the delivery charge from the customer's selected quote.
+	//
+	// The client sends only the opaque token. The charge is read out of it
+	// after the signature and the whole binding are re-verified against this
+	// customer, this cart, this destination and this payment mode -- so a
+	// tampered amount, a courier swap, an expired quote, another customer's
+	// quote or a quote for a different address are all rejected here rather
+	// than silently priced.
+	var verifiedQuote *shipping.VerifiedQuote
+	shippingCharge := 0.0
+
+	if token := strings.TrimSpace(req.ShippingQuote); token != "" {
+		if h.Shipping == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"success": false,
+				"message": "Delivery options are unavailable right now. Please try again.",
+			})
+		}
+
+		pkg := h.Shipping.DefaultPackage()
+		binding := shipping.QuoteBinding{
+			UserID:   user.UserID.Hex(),
+			CartHash: shipping.CartFingerprint(cartLinesFromItems(cartItems)),
+			Pincode:  strings.TrimSpace(req.ShippingAddress.ZipCode),
+			// Never from the request: a client-chosen parcel would let a
+			// customer quote a lighter, cheaper shipment than we send.
+			WeightGrams: pkg.WeightGrams,
+			COD:         isCOD,
+		}
+
+		verified, qErr := h.Shipping.Quoter().Verify(token, binding, time.Now())
+		if qErr != nil {
+			se := shipping.AsError(qErr)
+			log.Printf("[CHECKOUT] rejected shipping quote for user %s: %s", user.UserID.Hex(), se.Detail)
+			// Expired or superseded quotes are recoverable by re-quoting, so
+			// the code is returned for the client to act on.
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"code":    string(se.Code),
+				"message": "Your delivery option is no longer valid. Please choose it again.",
+			})
+		}
+
+		// A courier that will not carry COD cannot be used for a COD order,
+		// whatever the client selected.
+		if isCOD && !verified.CODAvailable {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"code":    string(shipping.CodeInvalidRequest),
+				"message": "The selected courier does not offer cash on delivery. Choose another courier or pay online.",
+			})
+		}
+
+		verifiedQuote = verified
+		shippingCharge = verified.Charge
+		total = goodsTotal + shippingCharge
+	} else if h.Shipping != nil && h.Config.RequireShippingSelection {
+		// Falling through with no delivery charge would ship at our expense
+		// and hide the omission, so it is refused when a selection is required.
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"code":    string(shipping.CodeInvalidRequest),
+			"message": "Please choose a delivery option before placing your order.",
+		})
+	}
+
+	// Verify the payment against the authoritative total.
+	//
+	// This used to check only the HMAC over (order_id|payment_id), which
+	// proves the identifiers are genuine but says nothing about the amount. A
+	// customer could pay a ₹1,000 intent, then add ₹10,000 of items and submit
+	// the same payment triple: the signature verified and the order was created
+	// as paid. VerifyPaid asks Razorpay what was actually captured and compares
+	// it to the total computed above.
 	if req.PaymentInfo.Method == "razorpay" {
 		if req.PaymentInfo.RazorpayOrderID == "" || req.PaymentInfo.RazorpayPaymentID == "" || req.PaymentInfo.RazorpaySignature == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Missing Razorpay payment details"})
 		}
-		mac := hmac.New(sha256.New, []byte(h.Config.RazorpaySecret))
-		mac.Write([]byte(req.PaymentInfo.RazorpayOrderID + "|" + req.PaymentInfo.RazorpayPaymentID))
-		expected := hex.EncodeToString(mac.Sum(nil))
-		if expected != req.PaymentInfo.RazorpaySignature {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Invalid payment signature"})
+
+		// A payment may settle exactly one order. Without this, the same
+		// captured payment could be replayed to create order after order.
+		used, err := h.DB.Collections().Orders.CountDocuments(ctx, bson.M{
+			"payment_info.razorpay_payment_id": req.PaymentInfo.RazorpayPaymentID,
+		})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false, "message": "Could not verify payment",
+			})
+		}
+		if used > 0 {
+			log.Printf("[CHECKOUT] rejected replayed razorpay payment for user %s", user.UserID.Hex())
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"success": false,
+				"message": "This payment has already been used for an order.",
+			})
+		}
+
+		verifier := NewRazorpayVerifier(h.Config.RazorpayKey, h.Config.RazorpaySecret)
+		if err := verifier.VerifyPaid(ctx,
+			req.PaymentInfo.RazorpayOrderID,
+			req.PaymentInfo.RazorpayPaymentID,
+			req.PaymentInfo.RazorpaySignature,
+			total,
+		); err != nil {
+			// The reason stays in the log; the customer gets one message.
+			log.Printf("[CHECKOUT] payment verification failed for user %s: %v", user.UserID.Hex(), err)
+			status := fiber.StatusBadRequest
+			if errors.Is(err, ErrPaymentGatewayUnreach) {
+				status = fiber.StatusBadGateway
+			}
+			return c.Status(status).JSON(fiber.Map{
+				"success": false,
+				"message": "We could not confirm your payment. Nothing has been charged for this order.",
+			})
 		}
 	}
 
@@ -365,14 +451,19 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 	// Create the order
 	now := time.Now()
 	order := models.Order{
-		ID:              primitive.NewObjectID(),
-		OrderNumber:     orderNumber,
-		UserID:          user.UserID,
-		Items:           orderItems,
-		Subtotal:        subtotal,
-		CouponCode:      req.CouponCode,
-		DiscountAmount:  discountAmount,
-		Total:           total,
+		ID:             primitive.NewObjectID(),
+		OrderNumber:    orderNumber,
+		UserID:         user.UserID,
+		Items:          orderItems,
+		Total:          total,
+		Subtotal:       subtotal,
+		CouponCode:     req.CouponCode,
+		DiscountAmount: discountAmount,
+		ShippingCharge: shippingCharge,
+		// Snapshot the delivery choice so the order stays explainable later,
+		// and so an admin retry books the courier the customer actually paid
+		// for rather than re-quoting weeks afterwards.
+		ShippingOption: rateChoiceFrom(verifiedQuote),
 		Status:          orderStatus,
 		PaymentStatus:   paymentStatus,
 		ShippingAddress: req.ShippingAddress,
@@ -416,25 +507,18 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		log.Printf("[CHECKOUT] ⚠️ PickupDetails is NIL!")
 	}
 
-	// Hand shipment creation off to SQS when configured (the Lambda/HTTP API
-	// deploy); otherwise call it synchronously as before. A Delhivery failure
-	// (or an enqueue failure, with synchronous fallback) is logged and
-	// recorded on the order but never fails the checkout response, since the
-	// order and payment are already committed at this point.
-	switch {
-	case h.ShipmentQueue != nil:
-		log.Printf("[CHECKOUT] 📦 Enqueuing Delhivery shipment for OrderID=%s", order.ID.Hex())
-		if err := h.ShipmentQueue.EnqueueShipment(ctx, order.ID.Hex()); err != nil {
-			log.Printf("[CHECKOUT] ⚠️ Failed to enqueue shipment, falling back to synchronous call: %v", err)
-			if h.DelhiveryService != nil {
-				shipment.CreateDelhiveryShipment(ctx, h.Config, h.DelhiveryService, h.DB.MongoDB, &order)
-			}
-		}
-	case h.DelhiveryService != nil:
-		log.Printf("[CHECKOUT] 📦 Creating Delhivery shipment synchronously for OrderID=%s", order.ID.Hex())
-		shipment.CreateDelhiveryShipment(ctx, h.Config, h.DelhiveryService, h.DB.MongoDB, &order)
-	default:
-		log.Printf("[CHECKOUT] ⚠️ DelhiveryService is nil - shipment will NOT be created for OrderID=%s", order.ID.Hex())
+	// Book the shipment in the background so the customer is not made to wait
+	// on a carrier round trip.
+	//
+	// The goroutine gets its own context: c.UserContext() is cancelled the
+	// moment this response is written, which would abort the carrier call. The
+	// booking is idempotent at the service layer, so this racing with an admin
+	// retry cannot produce two parcels.
+	if h.Shipping != nil {
+		log.Printf("[CHECKOUT] 📦 Booking shipment for OrderID=%s", order.ID.Hex())
+		go h.bookShipment(order, verifiedQuote)
+	} else {
+		log.Printf("[CHECKOUT] ⚠️ shipping service unavailable - no shipment booked for OrderID=%s", order.ID.Hex())
 	}
 
 	// Clear the user's cart
@@ -480,6 +564,44 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 	})
 }
 
+// bookShipment books the parcel for a freshly-placed order.
+//
+// This replaces the checkout-side shipment builder that used to live here. All
+// of the mapping -- customer details, package figures, payment mode, the
+// carrier order reference -- now happens once inside shipping.Service, so the
+// checkout path and the admin retry path can no longer drift apart. They did:
+// one used the human-readable order number as the carrier reference and
+// defaulted the country, the other used the raw ObjectID and did neither.
+func (h *OrderHandler) bookShipment(order models.Order, quote *shipping.VerifiedQuote) {
+	// Detached context with its own deadline: the request context is already
+	// cancelled by the time this runs.
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	display := order.OrderNumber
+	if display == "" {
+		display = order.ID.Hex()
+	}
+
+	shipment, err := h.Shipping.CreateShipmentForOrder(ctx, &order, shipping.CreateOptions{
+		AssignAWB: true,
+		// The courier the customer selected and paid for. Nil for an order
+		// placed without a selection, in which case the service falls back to
+		// whatever is recorded on the order.
+		Quote: quote,
+	})
+	if err != nil {
+		// The failure is already recorded on the order and the shipment record
+		// by the service; an admin can retry from the dashboard. Only the
+		// classification is logged here -- provider detail stays in the
+		// service's own log line.
+		log.Printf("[CHECKOUT] shipment booking failed for order %s: %s",
+			display, shipping.CodeOf(err))
+		return
+	}
+	log.Printf("[CHECKOUT] shipment booked for order %s: provider=%s tracking=%s",
+		display, shipment.Provider, shipment.TrackingNumber)
+}
 // GetOrders retrieves order history for a user
 func (h *OrderHandler) GetOrders(c *fiber.Ctx) error {
 	ctx := c.Context()
@@ -897,28 +1019,21 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 
 	log.Printf("[CANCEL_ORDER] 🚫 Cancelling order: %s (Status: %s)", order.OrderNumber, order.Status)
 
-	// Try to cancel Delhivery shipment if it exists and hasn't been picked up yet
-	if order.ShippingInfo != nil && order.ShippingInfo.Waybill != "" && h.DelhiveryService != nil {
-		waybill := order.ShippingInfo.Waybill
-		log.Printf("[CANCEL_ORDER] 📦 Attempting to cancel Delhivery shipment: %s", waybill)
-
-		// Only attempt to cancel if not already picked up or delivered
-		canCancelShipment := order.ShippingInfo.ShipmentStatus == "" ||
-			order.ShippingInfo.ShipmentStatus == "manifested" ||
-			order.ShippingInfo.ShipmentStatus == "pending"
-
-		if canCancelShipment {
-			cancelErr := h.DelhiveryService.CancelShipment(waybill)
-			if cancelErr != nil {
-				log.Printf("[CANCEL_ORDER] ⚠️ Failed to cancel Delhivery shipment %s: %v", waybill, cancelErr)
-				log.Printf("[CANCEL_ORDER] ℹ️ Continuing with order cancellation despite shipment cancel failure")
-				// Don't fail the entire cancellation if Delhivery cancel fails
-			} else {
-				log.Printf("[CANCEL_ORDER] ✅ Delhivery shipment %s cancelled successfully", waybill)
-			}
-		} else {
-			log.Printf("[CANCEL_ORDER] ℹ️ Shipment already picked up (status: %s), cannot cancel with carrier",
-				order.ShippingInfo.ShipmentStatus)
+	// Withdraw the parcel at whichever carrier holds it, if it can still be
+	// withdrawn. The order is cancelled either way: a carrier that declines
+	// must not block the customer's cancellation, and a parcel already in
+	// transit is handled by the carrier's own return flow.
+	if h.Shipping != nil && order.ShippingInfo.HasShipment() {
+		cancelled, cancelErr := h.Shipping.CancelIfCancellable(ctx, &order)
+		switch {
+		case cancelErr != nil:
+			log.Printf("[CANCEL_ORDER] ⚠️ carrier cancellation failed for order %s: %s",
+				order.ID.Hex(), shipping.CodeOf(cancelErr))
+		case cancelled:
+			log.Printf("[CANCEL_ORDER] ✅ carrier shipment withdrawn for order %s", order.ID.Hex())
+		default:
+			log.Printf("[CANCEL_ORDER] ℹ️ shipment for order %s is past the cancellable window (status: %s)",
+				order.ID.Hex(), order.ShippingInfo.ShipmentStatus)
 		}
 	}
 

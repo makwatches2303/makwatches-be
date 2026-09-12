@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strings"
@@ -22,87 +22,28 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/shipping"
 )
 
 // PaymentHandler provides endpoints for initiating payments (Razorpay order creation)
 type PaymentHandler struct {
 	DB  *database.DBClient
 	Cfg *config.Config
+	// Shipping resolves the selected delivery quote so the payment intent is
+	// raised for the same total checkout will compute.
+	Shipping *shipping.Service
 }
 
-func NewPaymentHandler(db *database.DBClient, cfg *config.Config) *PaymentHandler {
-	return &PaymentHandler{DB: db, Cfg: cfg}
+func NewPaymentHandler(db *database.DBClient, cfg *config.Config, shippingSvc *shipping.Service) *PaymentHandler {
+	return &PaymentHandler{DB: db, Cfg: cfg, Shipping: shippingSvc}
 }
 
-// cartTotalINR computes the current cart total for a user
-func (h *PaymentHandler) cartTotalINR(userID any) (float64, error) {
-	ctx := context.Background()
-	cartCol := h.DB.Collections().CartItems
-	prodCol := h.DB.Collections().Products
-	heroCol := h.DB.MongoDB.Collection("hero_slides")
-	collectionCol := h.DB.MongoDB.Collection("home_collection_features")
-
-	cursor, err := cartCol.Find(ctx, bson.M{"user_id": userID})
-	if err != nil {
-		return 0, err
-	}
-	defer cursor.Close(ctx)
-	type itemRow struct {
-		ProductID interface{} `bson:"product_id"`
-		Quantity  int         `bson:"quantity"`
-	}
-	var rows []itemRow
-	if err := cursor.All(ctx, &rows); err != nil {
-		return 0, err
-	}
-	total := 0.0
-	for _, r := range rows {
-		// Try regular products first
-		var p models.Product
-		err := prodCol.FindOne(ctx, bson.M{"_id": r.ProductID}).Decode(&p)
-		if err == nil {
-			// Found in regular products
-			if p.Stock < r.Quantity {
-				return 0, fmt.Errorf("insufficient stock for product: %s", p.Name)
-			}
-			// Use discounted final price if active
-			unit := p.GetFinalPrice()
-			total += unit * float64(r.Quantity)
-		} else {
-			// Try to find in home content by productId
-			var heroSlide models.HeroSlide
-			err = heroCol.FindOne(ctx, bson.M{"productId": r.ProductID}).Decode(&heroSlide)
-			if err == nil {
-				// Found in hero slides - parse price
-				priceFloat := 0.0
-				fmt.Sscanf(heroSlide.Price, "₹%f", &priceFloat)
-				if priceFloat == 0 {
-					fmt.Sscanf(heroSlide.Price, "%f", &priceFloat)
-				}
-				total += priceFloat * float64(r.Quantity)
-			} else {
-				// Try collection features
-				var collectionFeature models.HomeCollectionFeature
-				err = collectionCol.FindOne(ctx, bson.M{"productId": r.ProductID}).Decode(&collectionFeature)
-				if err == nil {
-					// Found in collection features - parse price
-					priceFloat := 0.0
-					if collectionFeature.Price != "" {
-						fmt.Sscanf(collectionFeature.Price, "₹%f", &priceFloat)
-						if priceFloat == 0 {
-							fmt.Sscanf(collectionFeature.Price, "%f", &priceFloat)
-						}
-					}
-					total += priceFloat * float64(r.Quantity)
-				} else {
-					// Product not found in any collection
-					return 0, fmt.Errorf("product not found in cart")
-				}
-			}
-		}
-	}
-	return total, nil
-}
+// NOTE: a second cart-pricing implementation (cartTotalINR) lived here and
+// has been removed. It priced items checkout refuses -- entries found only in
+// hero_slides or home_collection_features -- so the payment intent could be
+// raised for a cart checkout would then reject. With the captured amount now
+// verified against the order total, two pricing paths is a correctness bug,
+// not untidiness: both sides go through cartComposition.
 
 // CreateRazorpayOrder creates a Razorpay order from cart total
 func (h *PaymentHandler) CreateRazorpayOrder(c *fiber.Ctx) error {
@@ -114,26 +55,58 @@ func (h *PaymentHandler) CreateRazorpayOrder(c *fiber.Ctx) error {
 	if h.Cfg.RazorpayKey == "" || h.Cfg.RazorpaySecret == "" {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"success": false, "message": "Payment gateway not configured"})
 	}
-	total, err := h.cartTotalINR(user.UserID)
+
+	// The intent amount must equal what checkout will compute, because checkout
+	// now verifies the captured amount against its own total. Both sides price
+	// the cart through cartComposition and add the same validated delivery
+	// charge; if they disagreed, every legitimate payment would be refused.
+	ctx := c.UserContext()
+	lines, subtotal, err := cartComposition(ctx, h.DB, user.UserID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": err.Error()})
 	}
-	if total <= 0 {
+	if len(lines) == 0 || subtotal <= 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Cart empty"})
 	}
 
 	var reqBody struct {
-		CouponCode string `json:"couponCode"`
+		CouponCode    string `json:"couponCode"`
+		ShippingQuote string `json:"shippingQuote"`
+		Pincode       string `json:"pincode"`
+		COD           bool   `json:"cod"`
 	}
 	_ = c.BodyParser(&reqBody)
+
+	total := subtotal
 	if strings.TrimSpace(reqBody.CouponCode) != "" {
 		code := strings.ToUpper(strings.TrimSpace(reqBody.CouponCode))
 		var coupon models.Coupon
 		if err := h.DB.Collections().Coupons.FindOne(c.Context(), bson.M{"code": code}).Decode(&coupon); err == nil {
-			if disc, err := coupon.CalculateDiscount(total); err == nil {
+			if disc, err := coupon.CalculateDiscount(subtotal); err == nil {
 				total = math.Max(0, total-disc)
 			}
 		}
+	}
+
+	if token := strings.TrimSpace(reqBody.ShippingQuote); token != "" && h.Shipping != nil {
+		pkg := h.Shipping.DefaultPackage()
+		verified, qErr := h.Shipping.Quoter().Verify(token, shipping.QuoteBinding{
+			UserID:      user.UserID.Hex(),
+			CartHash:    shipping.CartFingerprint(lines),
+			Pincode:     strings.TrimSpace(reqBody.Pincode),
+			WeightGrams: pkg.WeightGrams,
+			COD:         reqBody.COD,
+		}, time.Now())
+		if qErr != nil {
+			se := shipping.AsError(qErr)
+			log.Printf("[PAYMENT] rejected shipping quote for user %s: %s", user.UserID.Hex(), se.Detail)
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"code":    string(se.Code),
+				"message": "Your delivery option is no longer valid. Please choose it again.",
+			})
+		}
+		total += verified.Charge
 	}
 
 	amountPaise := int64(math.Round(total * 100))

@@ -1,0 +1,8 @@
+{
+  "data": {
+    "shipping_address": [
+      { "id": 1, "pickup_location": "Shree Ganesh Watch", "name": "MAK Watches", "address": "Matva Street, Near Balaji Complex", "address_2": "Stand chowk, Jetpur", "city": "Jetpur", "state": "Gujarat", "country": "India", "pin_code": "360370", "phone": "9974959693", "email": "api@makwatches.in" },
+      { "id": 2, "pickup_location": "Secondary Warehouse", "name": "MAK Watches", "address": "Unit 4", "city": "Rajkot", "state": "Gujarat", "country": "India", "pin_code": "360001", "phone": "9974959693", "email": "api@makwatches.in" }
+    ]
+  }
+}

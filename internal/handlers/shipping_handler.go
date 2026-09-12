@@ -1,13 +1,7 @@
 package handlers
 
 import (
-	"crypto/hmac"
-	"errors"
-	"fmt"
-	"io"
-	"log"
 	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
@@ -17,132 +11,31 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/services"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/shipping"
 )
 
-// ShippingHandler handles shipping related requests
+// ShippingHandler serves the original flat shipping routes.
+//
+// Every route it exposed before is still mounted on the same path with the
+// same response shape, so the live storefront and admin app keep working. What
+// changed is underneath: it no longer talks to Delhivery directly but goes
+// through shipping.Service, which is what makes these endpoints work for
+// Shiprocket-booked orders and Delhivery-booked orders alike.
 type ShippingHandler struct {
-	DB               *database.DBClient
-	Config           *config.Config
-	DelhiveryService *services.DelhiveryService
+	DB      *database.DBClient
+	Config  *config.Config
+	Service *shipping.Service
 }
 
-// NewShippingHandler creates a new instance of ShippingHandler
-func NewShippingHandler(db *database.DBClient, cfg *config.Config) *ShippingHandler {
-	// Initialize Delhivery service
-	delhiveryConfig := services.DelhiveryConfig{
-		APIToken:       cfg.DelhiveryAPIToken,
-		BaseURL:        cfg.DelhiveryBaseURL,
-		PickupLocation: cfg.DelhiveryPickupLocation,
-		SellerName:     cfg.DelhiverySellerName,
-		SellerPhone:    cfg.DelhiverySellerPhone,
-		SellerAddress:  cfg.DelhiverySellerAddress,
-		SellerCity:     cfg.DelhiverySellerCity,
-		SellerState:    cfg.DelhiverySellerState,
-		SellerPincode:  cfg.DelhiverySellerPincode,
-		ReturnAddress:  cfg.DelhiveryReturnAddress,
-		ReturnCity:     cfg.DelhiveryReturnCity,
-		ReturnState:    cfg.DelhiveryReturnState,
-		ReturnPincode:  cfg.DelhiveryReturnPincode,
-		ReturnPhone:    cfg.DelhiveryReturnPhone,
-	}
-
-	return &ShippingHandler{
-		DB:               db,
-		Config:           cfg,
-		DelhiveryService: services.NewDelhiveryService(delhiveryConfig),
-	}
+// NewShippingHandler builds the handler around the shared shipping service.
+func NewShippingHandler(db *database.DBClient, cfg *config.Config, svc *shipping.Service) *ShippingHandler {
+	return &ShippingHandler{DB: db, Config: cfg, Service: svc}
 }
 
-// CreateShipmentForOrder creates a Delhivery shipment for an order
-func (h *ShippingHandler) CreateShipmentForOrder(order *models.Order) (*services.CreateShipmentResponse, error) {
-	if h.Config.DelhiveryAPIToken == "" {
-		return nil, fmt.Errorf("delhivery API token not configured")
-	}
-
-	// Build product description from order items
-	var productNames []string
-	totalQuantity := 0
-	for _, item := range order.Items {
-		productNames = append(productNames, item.ProductName)
-		totalQuantity += item.Quantity
-	}
-	productDesc := strings.Join(productNames, ", ")
-	if len(productDesc) > 200 {
-		productDesc = productDesc[:197] + "..."
-	}
-
-	// Determine payment mode
-	paymentMode := "Prepaid"
-	codAmount := 0.0
-	if order.PaymentInfo.Method == "cod" {
-		paymentMode = "COD"
-		codAmount = order.Total
-	}
-
-	// Get customer details
-	customerName := order.CustomerName
-	if customerName == "" {
-		customerName = order.ShippingAddress.Name
-	}
-	if customerName == "" {
-		customerName = "Customer"
-	}
-
-	customerPhone := order.CustomerPhone
-	if customerPhone == "" {
-		customerPhone = order.ShippingAddress.Phone
-	}
-
-	// Create shipment request
-	req := services.CreateShipmentRequest{
-		CustomerName:    customerName,
-		CustomerPhone:   customerPhone,
-		CustomerEmail:   order.CustomerEmail,
-		CustomerAddress: order.ShippingAddress.Street,
-		CustomerCity:    order.ShippingAddress.City,
-		CustomerState:   order.ShippingAddress.State,
-		CustomerPincode: order.ShippingAddress.ZipCode,
-		CustomerCountry: order.ShippingAddress.Country,
-		OrderID:         order.ID.Hex(),
-		OrderDate:       order.CreatedAt.Format("2006-01-02"),
-		TotalAmount:     order.Total,
-		PaymentMode:     paymentMode,
-		CODAmount:       codAmount,
-		ProductQuantity: totalQuantity,
-		ProductDesc:     productDesc,
-		// Default package dimensions for watches (can be configured later)
-		Weight:  500, // 500 grams
-		Length:  15,  // 15 cm
-		Breadth: 10,  // 10 cm
-		Height:  8,   // 8 cm
-	}
-
-	// Create items list
-	for _, item := range order.Items {
-		req.Items = append(req.Items, services.ShipmentItem{
-			Name:     item.ProductName,
-			SKU:      item.ProductID.Hex(),
-			Quantity: item.Quantity,
-			Price:    item.Price,
-		})
-	}
-
-	// Call Delhivery API
-	return h.DelhiveryService.CreateShipment(req)
-}
-
-// TrackShipment returns tracking info for an order
+// TrackShipment returns tracking for one of the caller's orders.
+//
+// GET /shipping/track/order/:orderID
 func (h *ShippingHandler) TrackShipment(c *fiber.Ctx) error {
-	orderID := c.Params("orderID")
-	if orderID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Order ID is required",
-		})
-	}
-
-	// Get user info
 	user, ok := c.Locals("user").(*middleware.TokenMetadata)
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -151,8 +44,7 @@ func (h *ShippingHandler) TrackShipment(c *fiber.Ctx) error {
 		})
 	}
 
-	// Parse order ID
-	objID, err := primitive.ObjectIDFromHex(orderID)
+	objID, err := primitive.ObjectIDFromHex(strings.TrimSpace(c.Params("orderID")))
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
@@ -160,90 +52,65 @@ func (h *ShippingHandler) TrackShipment(c *fiber.Ctx) error {
 		})
 	}
 
-	// Get the order
-	ctx := c.Context()
-	orderCollection := h.DB.Collections().Orders
+	ctx := c.UserContext()
 	var order models.Order
-	err = orderCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&order)
-	if err != nil {
+	if err := h.DB.Collections().Orders.FindOne(ctx, bson.M{"_id": objID}).Decode(&order); err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"success": false,
+			"message": "Order not found",
+		})
+	}
+	if user.Role != "admin" && order.UserID != user.UserID {
+		// Answered as "not found", identically to an order that does not
+		// exist. A 403 here distinguished real order ids from imaginary ones,
+		// which turned this route into an enumeration oracle for other
+		// customers' orders. See TestOtherUserCannotReachAnotherCustomersShipment.
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success": false,
 			"message": "Order not found",
 		})
 	}
 
-	// Check authorization (user can view own orders, admin can view all)
-	if user.UserID != order.UserID && user.Role != "admin" {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"success": false,
-			"message": "Not authorized to view this order",
-		})
-	}
-
-	// Check if shipping info exists
-	if order.ShippingInfo == nil || order.ShippingInfo.Waybill == "" {
+	info := order.ShippingInfo
+	if !info.HasShipment() {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success": false,
 			"message": "No tracking information available for this order",
 		})
 	}
 
-	// Get tracking info from Delhivery
-	tracking, err := h.DelhiveryService.TrackShipment(order.ShippingInfo.Waybill)
+	tracking, err := h.Service.Track(ctx, &order)
 	if err != nil {
-		log.Printf("Error tracking shipment %s: %v", order.ShippingInfo.Waybill, err)
-		// Return cached info if available
+		// Fall back to the last known state. An order booked a minute ago
+		// legitimately has no carrier data yet, and that is not an error the
+		// customer should see as a failure.
 		return c.JSON(fiber.Map{
 			"success": true,
 			"data": fiber.Map{
-				"waybill":          order.ShippingInfo.Waybill,
-				"trackingUrl":      order.ShippingInfo.TrackingURL,
-				"status":           order.ShippingInfo.ShipmentStatus,
-				"lastUpdate":       order.ShippingInfo.LastStatusUpdate,
-				"expectedDelivery": order.ShippingInfo.ExpectedDelivery,
-				"currentLocation":  order.ShippingInfo.CurrentLocation,
+				"provider":         info.ProviderName(),
+				"waybill":          info.AWB(),
+				"trackingNumber":   info.AWB(),
+				"trackingUrl":      info.TrackingURL,
+				"status":           info.ShipmentStatus,
+				"courierName":      info.CourierName,
+				"lastUpdate":       info.LastStatusUpdate,
+				"expectedDelivery": info.ExpectedDelivery,
+				"currentLocation":  info.CurrentLocation,
 				"error":            "Unable to fetch live tracking, showing last known status",
 			},
 		})
 	}
-
-	// Update order with latest tracking info
-	update := bson.M{
-		"$set": bson.M{
-			"shipping_info.shipment_status":    tracking.ShipmentStatus,
-			"shipping_info.last_status_update": time.Now(),
-			"shipping_info.expected_delivery":  tracking.ExpectedDelivery,
-			"shipping_info.current_location":   tracking.StatusLocation,
-			"updated_at":                       time.Now(),
-		},
-	}
-
-	// Update order status based on shipping status
-	if tracking.ShipmentStatus == "delivered" {
-		update["$set"].(bson.M)["status"] = "delivered"
-		update["$set"].(bson.M)["shipping_info.delivered_at"] = time.Now()
-		// Mark COD as paid when delivered
-		if order.PaymentInfo.Method == "cod" {
-			update["$set"].(bson.M)["payment_status"] = "paid"
-		}
-	} else if tracking.ShipmentStatus == "picked_up" {
-		update["$set"].(bson.M)["status"] = "shipped"
-		update["$set"].(bson.M)["shipping_info.picked_up_at"] = time.Now()
-	} else if tracking.ShipmentStatus == "returned" {
-		update["$set"].(bson.M)["status"] = "returned"
-	}
-
-	orderCollection.UpdateOne(ctx, bson.M{"_id": objID}, update)
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    tracking,
-	})
+	return c.JSON(fiber.Map{"success": true, "data": tracking})
 }
 
-// TrackByWaybill returns tracking info by waybill number (public endpoint)
+// TrackByWaybill returns tracking for a bare tracking number.
+//
+// GET /shipping/track/:waybill -- public, the same as a carrier's own tracking
+// page. It resolves the shipment locally first so the lookup is routed to the
+// carrier that actually holds the parcel, which is what makes a historical
+// Delhivery waybill and a new Shiprocket AWB both work here.
 func (h *ShippingHandler) TrackByWaybill(c *fiber.Ctx) error {
-	waybill := c.Params("waybill")
+	waybill := strings.TrimSpace(c.Params("waybill"))
 	if waybill == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
@@ -251,26 +118,39 @@ func (h *ShippingHandler) TrackByWaybill(c *fiber.Ctx) error {
 		})
 	}
 
-	tracking, err := h.DelhiveryService.TrackShipment(waybill)
+	ctx := c.UserContext()
+	var order models.Order
+	err := h.DB.Collections().Orders.FindOne(ctx, bson.M{
+		"$or": []bson.M{
+			{"shipping_info.waybill": waybill},
+			{"shipping_info.tracking_number": waybill},
+		},
+	}).Decode(&order)
 	if err != nil {
+		// Not ours. Answering "not found" rather than probing every carrier
+		// keeps this endpoint from being a free tracking proxy.
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success": false,
 			"message": "Unable to track shipment",
-			"error":   err.Error(),
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    tracking,
-	})
+	tracking, err := h.Service.Track(ctx, &order)
+	if err != nil {
+		return shippingError(c, err, "public tracking "+waybill)
+	}
+	return c.JSON(fiber.Map{"success": true, "data": tracking})
 }
 
-// CheckPincode checks if a pincode is serviceable
+// CheckPincode reports whether we deliver to a pincode.
+//
+// GET /shipping/check-pincode/:pincode (and ?pincode=). The response keeps the
+// shape the storefront already reads -- pincode/city/district/state/cod/prepaid
+// -- and adds the normalized courier options alongside.
 func (h *ShippingHandler) CheckPincode(c *fiber.Ctx) error {
-	pincode := c.Params("pincode")
+	pincode := strings.TrimSpace(c.Params("pincode"))
 	if pincode == "" {
-		pincode = c.Query("pincode")
+		pincode = strings.TrimSpace(c.Query("pincode"))
 	}
 	if pincode == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -279,521 +159,304 @@ func (h *ShippingHandler) CheckPincode(c *fiber.Ctx) error {
 		})
 	}
 
-	serviceability, err := h.DelhiveryService.CheckPincodeServiceability(pincode)
+	// Anonymous binding: this route is public, so the quotes it returns are
+	// display-only and cannot satisfy a checkout, which always presents a
+	// customer and a cart.
+	result, err := h.Service.Serviceability(c.UserContext(), "", shipping.RateRequest{
+		DeliveryPincode: pincode,
+		Package:         h.Service.DefaultPackage(),
+	}, shipping.QuoteBinding{})
 	if err != nil {
+		se := shipping.AsError(err)
 		// "We could not check" is not "we do not deliver here". Collapsing the
 		// two told customers at serviceable addresses that we do not ship to
 		// them whenever our carrier credentials failed.
-		if errors.Is(err, services.ErrCarrierUnavailable) {
-			return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
-				"success": false,
-				"message": "We could not check delivery for this pincode right now.",
-				"error":   err.Error(),
+		switch se.Code {
+		case shipping.CodeNotServiceable, shipping.CodeRateUnavailable:
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"success":     false,
+				"serviceable": false,
+				"message":     "Pincode not serviceable",
 			})
+		case shipping.CodeInvalidPincode:
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"code":    string(se.Code),
+				"message": "Please enter a valid 6-digit pincode.",
+			})
+		default:
+			return shippingError(c, err, "check pincode "+pincode)
 		}
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"success":     false,
-			"serviceable": false,
-			"message":     "Pincode not serviceable",
-		})
 	}
 
 	return c.JSON(fiber.Map{
 		"success":     true,
 		"serviceable": true,
-		"data":        serviceability,
+		"data":        result,
 	})
 }
 
-// CheckoutShippingOption represents a normalized delivery option for checkout
-type CheckoutShippingOption struct {
-	ID                    string  `json:"id"`
-	Provider              string  `json:"provider"`
-	ProviderCourierID     string  `json:"providerCourierId"`
-	CourierName           string  `json:"courierName"`
-	Charge                float64 `json:"charge"`
-	EstimatedDeliveryDays int     `json:"estimatedDeliveryDays,omitempty"`
-	ETD                   string  `json:"etd,omitempty"`
-	CODAvailable          bool    `json:"codAvailable"`
-	Mode                  string  `json:"mode,omitempty"`
-	Recommended           bool    `json:"recommended,omitempty"`
-	Quote                 string  `json:"quote"`
-}
-
-// GetCheckoutShippingOptions returns delivery courier options for cart checkout
+// GetCheckoutShippingOptions returns delivery courier options for cart checkout.
 func (h *ShippingHandler) GetCheckoutShippingOptions(c *fiber.Ctx) error {
-	var req struct {
+	var body struct {
 		Pincode string `json:"pincode"`
 		COD     bool   `json:"cod"`
 	}
-	_ = c.BodyParser(&req)
-
-	pincode := strings.TrimSpace(req.Pincode)
+	_ = c.BodyParser(&body)
+	pincode := strings.TrimSpace(body.Pincode)
 	if pincode == "" {
 		pincode = strings.TrimSpace(c.Query("pincode"))
 	}
-	if len(pincode) < 6 {
+	if pincode == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
-			"message": "A valid 6-digit destination pincode is required",
+			"code":    string(shipping.CodeInvalidPincode),
+			"message": "Please enter a valid 6-digit pincode.",
 		})
 	}
 
-	serviceability, err := h.DelhiveryService.CheckPincodeServiceability(pincode)
-	if err != nil {
-		if errors.Is(err, services.ErrPincodeNotServiceable) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"success": false,
-				"message": "Pincode is not serviceable by courier partners",
-			})
+	ctx := c.UserContext()
+	var binding shipping.QuoteBinding
+	var subtotal float64
+
+	if user, ok := c.Locals("user").(*middleware.TokenMetadata); ok && user != nil {
+		if lines, sub, err := cartComposition(ctx, h.DB, user.UserID); err == nil && len(lines) > 0 {
+			binding = shipping.QuoteBinding{
+				UserID:   user.UserID.Hex(),
+				CartHash: shipping.CartFingerprint(lines),
+			}
+			subtotal = sub
+		} else {
+			binding.UserID = user.UserID.Hex()
 		}
-		// Carrier API unreachable or credentials issue: do not block customer checkout
-		log.Printf("[SHIPPING-OPTIONS] ⚠️ Carrier check failed for %s (%v), using default express option", pincode, err)
-		serviceability = &services.PincodeServiceability{
-			Pincode: pincode,
-			COD:     true,
-			Prepaid: true,
-		}
 	}
 
-	var options []CheckoutShippingOption
-	// If customer explicitly requested COD and carrier does not support COD at this pincode
-	if req.COD && !serviceability.COD {
-		return c.JSON(fiber.Map{
-			"success":  true,
-			"pincode":  pincode,
-			"provider": "delhivery",
-			"cod":      false,
-			"prepaid":  serviceability.Prepaid,
-			"options":  options,
-			"message":  "Cash on delivery is not available for this pincode. Please select Pay Online.",
-		})
-	}
-
-	modeStr := "online"
-	if req.COD {
-		modeStr = "cod"
-	}
-	quote := fmt.Sprintf("quote_delhivery_%s_%s_%d", pincode, modeStr, time.Now().Unix())
-	options = append(options, CheckoutShippingOption{
-		ID:                    "delhivery-express",
-		Provider:              "delhivery",
-		ProviderCourierID:     "delhivery_surface",
-		CourierName:           "Delhivery Express (Insured)",
-		Charge:                0, // Free complimentary insured delivery for MAK Watches
-		EstimatedDeliveryDays: 3,
-		CODAvailable:          serviceability.COD,
-		Mode:                  "Express",
-		Recommended:           true,
-		Quote:                 quote,
-	})
-
-	return c.JSON(fiber.Map{
-		"success":  true,
-		"pincode":  pincode,
-		"provider": "delhivery",
-		"cod":      serviceability.COD,
-		"prepaid":  serviceability.Prepaid,
-		"options":  options,
-	})
-}
-
-// DelhiveryWebhook handles status updates from Delhivery.
-//
-// Unlike RazorpayWebhook, Delhivery does not sign its callbacks with an
-// HMAC -- the mechanism it offers is a shared token you configure alongside
-// the registered callback URL in the Delhivery One dashboard. This handler
-// requires that same token back on every call, as a bearer token or a
-// ?token= query param, and fails closed (like RazorpayWebhook) if none is
-// configured: an unconfigured token must not silently mean "trust anyone."
-func (h *ShippingHandler) DelhiveryWebhook(c *fiber.Ctx) error {
-	if h.Config.DelhiveryWebhookToken == "" {
-		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
-			"success": false,
-			"message": "Webhook token not configured",
-		})
-	}
-
-	provided := strings.TrimPrefix(c.Get("Authorization"), "Bearer ")
-	if provided == "" {
-		provided = c.Query("token")
-	}
-	if provided == "" || !hmac.Equal([]byte(provided), []byte(h.Config.DelhiveryWebhookToken)) {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"success": false,
-			"message": "Invalid or missing webhook token",
-		})
-	}
-
-	body := c.Body()
-
-	// Parse webhook payload
-	payload, err := services.ParseWebhook(body)
+	pkg := h.Service.DefaultPackage()
+	result, err := h.Service.Serviceability(ctx, "", shipping.RateRequest{
+		DeliveryPincode: pincode,
+		COD:             body.COD,
+		Package:         pkg,
+		DeclaredValue:   subtotal,
+	}, binding)
 	if err != nil {
-		log.Printf("Failed to parse Delhivery webhook: %v", err)
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Invalid webhook payload",
-		})
+		return shippingError(c, err, "checkout shipping options "+pincode)
 	}
-
-	log.Printf("Received Delhivery webhook: waybill=%s, status=%s, statusType=%s",
-		payload.Waybill, payload.Status, payload.StatusType)
-
-	// Find order by waybill
-	ctx := c.Context()
-	orderCollection := h.DB.Collections().Orders
-	var order models.Order
-	err = orderCollection.FindOne(ctx, bson.M{
-		"shipping_info.waybill": payload.Waybill,
-	}).Decode(&order)
-
-	if err != nil {
-		log.Printf("Order not found for waybill %s: %v", payload.Waybill, err)
-		// Return success anyway so Delhivery doesn't keep retrying
-		return c.JSON(fiber.Map{
-			"success": true,
-			"message": "Webhook received",
-		})
-	}
-
-	// Map Delhivery status to internal status
-	shipmentStatus := services.GetOrderStatusFromWebhook(payload.StatusType)
-
-	// Prepare update
-	update := bson.M{
-		"$set": bson.M{
-			"shipping_info.shipment_status":    shipmentStatus,
-			"shipping_info.last_status_update": time.Now(),
-			"shipping_info.current_location":   payload.StatusLocation,
-			"shipping_info.expected_delivery":  payload.ExpectedDate,
-			"updated_at":                       time.Now(),
-		},
-	}
-
-	// Update order status based on shipping status
-	switch shipmentStatus {
-	case "delivered":
-		update["$set"].(bson.M)["status"] = "delivered"
-		update["$set"].(bson.M)["shipping_info.delivered_at"] = time.Now()
-		// Mark COD as paid when delivered
-		if order.PaymentInfo.Method == "cod" {
-			update["$set"].(bson.M)["payment_status"] = "paid"
-		}
-	case "picked_up":
-		update["$set"].(bson.M)["status"] = "shipped"
-		update["$set"].(bson.M)["shipping_info.picked_up_at"] = time.Now()
-	case "out_for_delivery":
-		update["$set"].(bson.M)["status"] = "out_for_delivery"
-	case "returned":
-		update["$set"].(bson.M)["status"] = "returned"
-	case "undelivered":
-		// Keep status as shipped but log the issue
-		log.Printf("Order %s undelivered: %s", order.ID.Hex(), payload.Remarks)
-	}
-
-	// Update the order
-	_, err = orderCollection.UpdateOne(ctx, bson.M{"_id": order.ID}, update)
-	if err != nil {
-		log.Printf("Failed to update order %s: %v", order.ID.Hex(), err)
-	}
-
-	// Invalidate order cache
-	orderCacheKey := fmt.Sprintf("order:%s", order.ID.Hex())
-	h.DB.CacheDel(ctx, orderCacheKey)
-	ordersCacheKey := fmt.Sprintf("orders:%s", order.UserID.Hex())
-	h.DB.CacheDel(ctx, ordersCacheKey)
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Webhook processed successfully",
-	})
-}
-
-// RetryShipment retries creating a shipment for an order (admin only)
-func (h *ShippingHandler) RetryShipment(c *fiber.Ctx) error {
-	orderID := c.Params("orderID")
-	if orderID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Order ID is required",
-		})
-	}
-
-	// Parse order ID
-	objID, err := primitive.ObjectIDFromHex(orderID)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Invalid order ID",
-		})
-	}
-
-	// Get the order
-	ctx := c.Context()
-	orderCollection := h.DB.Collections().Orders
-	var order models.Order
-	err = orderCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&order)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"success": false,
-			"message": "Order not found",
-		})
-	}
-
-	// Check if shipment already exists
-	if order.ShippingInfo != nil && order.ShippingInfo.Waybill != "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Shipment already created for this order",
-			"waybill": order.ShippingInfo.Waybill,
-		})
-	}
-
-	// Create shipment
-	shipmentResp, err := h.CreateShipmentForOrder(&order)
-	if err != nil {
-		// Update order with error
-		retryCount := 0
-		if order.ShippingInfo != nil {
-			retryCount = order.ShippingInfo.RetryCount
-		}
-		orderCollection.UpdateOne(ctx, bson.M{"_id": objID}, bson.M{
-			"$set": bson.M{
-				"shipping_info": models.ShippingInfo{
-					Provider:      "delhivery",
-					ShipmentError: err.Error(),
-					RetryCount:    retryCount + 1,
-				},
-				"updated_at": time.Now(),
-			},
-		})
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"message": "Failed to create shipment",
-			"error":   err.Error(),
-		})
-	}
-
-	// Update order with shipping info
-	trackingURL := fmt.Sprintf("https://www.delhivery.com/track/package/%s", shipmentResp.Waybill)
-	orderCollection.UpdateOne(ctx, bson.M{"_id": objID}, bson.M{
-		"$set": bson.M{
-			"shipping_info": models.ShippingInfo{
-				Provider:          "delhivery",
-				Waybill:           shipmentResp.Waybill,
-				TrackingURL:       trackingURL,
-				ShipmentStatus:    "manifested",
-				ShipmentCreatedAt: time.Now(),
-				LastStatusUpdate:  time.Now(),
-			},
-			"status":     "processing",
-			"updated_at": time.Now(),
-		},
-	})
 
 	return c.JSON(fiber.Map{
 		"success":     true,
-		"message":     "Shipment created successfully",
-		"waybill":     shipmentResp.Waybill,
-		"trackingUrl": trackingURL,
+		"serviceable": true,
+		"data":        result,
+		"pincode":     result.Pincode,
+		"provider":    result.Provider,
+		"cod":         result.COD,
+		"prepaid":     result.Prepaid,
+		"options":     result.Options,
 	})
 }
 
-// CancelShipment cancels a shipment (admin only)
-func (h *ShippingHandler) CancelShipment(c *fiber.Ctx) error {
-	orderID := c.Params("orderID")
-	if orderID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Order ID is required",
-		})
-	}
-
-	// Parse order ID
-	objID, err := primitive.ObjectIDFromHex(orderID)
+// RetryShipment books a shipment for an order that has none.
+//
+// POST /admin/shipping/orders/:orderID/retry. Idempotent through
+// shipping.Service: a repeated click cannot create a second parcel.
+func (h *ShippingHandler) RetryShipment(c *fiber.Ctx) error {
+	order, err := h.adminOrder(c)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Invalid order ID",
-		})
+		return authError(c, err)
 	}
 
-	// Get the order
-	ctx := c.Context()
-	orderCollection := h.DB.Collections().Orders
-	var order models.Order
-	err = orderCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&order)
-	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"success": false,
-			"message": "Order not found",
-		})
-	}
-
-	// Check if shipment exists
-	if order.ShippingInfo == nil || order.ShippingInfo.Waybill == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "No shipment found for this order",
-		})
-	}
-
-	// Cancel with Delhivery
-	err = h.DelhiveryService.CancelShipment(order.ShippingInfo.Waybill)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"message": "Failed to cancel shipment",
-			"error":   err.Error(),
-		})
-	}
-
-	// Update order
-	orderCollection.UpdateOne(ctx, bson.M{"_id": objID}, bson.M{
-		"$set": bson.M{
-			"shipping_info.shipment_status":    "cancelled",
-			"shipping_info.last_status_update": time.Now(),
-			"status":                           "cancelled",
-			"updated_at":                       time.Now(),
-		},
+	shipment, err := h.Service.CreateShipmentForOrder(c.UserContext(), order, shipping.CreateOptions{
+		AssignAWB: true,
 	})
+	if err != nil {
+		return shippingError(c, err, "retry shipment for order "+order.ID.Hex())
+	}
+	h.invalidateOrderCache(c, order)
 
+	if shipment.TrackingNumber == "" && shipment.ProviderShipmentID == "" {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"success": false,
+			"message": "A shipment for this order is already being created",
+		})
+	}
+	return c.JSON(fiber.Map{
+		"success":     true,
+		"message":     "Shipment created successfully",
+		"waybill":     shipment.TrackingNumber,
+		"trackingUrl": shipment.TrackingURL,
+		"data":        shipment,
+	})
+}
+
+// CancelShipment withdraws a shipment at the carrier.
+//
+// POST /admin/shipping/orders/:orderID/cancel
+func (h *ShippingHandler) CancelShipment(c *fiber.Ctx) error {
+	order, err := h.adminOrder(c)
+	if err != nil {
+		return authError(c, err)
+	}
+	if err := h.Service.Cancel(c.UserContext(), order); err != nil {
+		return shippingError(c, err, "cancel shipment for order "+order.ID.Hex())
+	}
+	h.invalidateOrderCache(c, order)
 	return c.JSON(fiber.Map{
 		"success": true,
 		"message": "Shipment cancelled successfully",
 	})
 }
 
-// GetShippingLabel gets the shipping label URL for an order (admin only)
+// GetShippingLabel streams the carrier label.
+//
+// GET /admin/shipping/orders/:orderID/label. This used to return a carrier URL
+// containing our account's endpoint, which a browser could not open: the
+// Delhivery packing slip requires the API token in a header. The document is
+// now fetched server-side and streamed, and no provider URL or credential
+// reaches the client.
 func (h *ShippingHandler) GetShippingLabel(c *fiber.Ctx) error {
-	orderID := c.Params("orderID")
-	if orderID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Order ID is required",
-		})
-	}
-
-	// Parse order ID
-	objID, err := primitive.ObjectIDFromHex(orderID)
+	order, err := h.adminOrder(c)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "Invalid order ID",
-		})
+		return authError(c, err)
 	}
 
-	// Get the order
-	ctx := c.Context()
-	orderCollection := h.DB.Collections().Orders
-	var order models.Order
-	err = orderCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&order)
+	label, err := h.Service.Label(c.UserContext(), order)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"success": false,
-			"message": "Order not found",
-		})
+		return shippingError(c, err, "label for order "+order.ID.Hex())
 	}
 
-	// Check if shipment exists
-	if order.ShippingInfo == nil || order.ShippingInfo.Waybill == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"message": "No shipment found for this order",
-		})
+	filename := label.Filename
+	if filename == "" {
+		filename = "label.pdf"
 	}
-
-	// Generate label URL (Delhivery provides this)
-	labelURL := fmt.Sprintf("%s/api/p/packing_slip?wbns=%s&pdf=true",
-		h.Config.DelhiveryBaseURL, order.ShippingInfo.Waybill)
-
-	return c.JSON(fiber.Map{
-		"success":  true,
-		"labelUrl": labelURL,
-		"waybill":  order.ShippingInfo.Waybill,
-	})
+	c.Set(fiber.HeaderContentType, label.ContentType)
+	c.Set(fiber.HeaderContentDisposition, `inline; filename="`+filename+`"`)
+	c.Set(fiber.HeaderCacheControl, "no-store, private")
+	return c.Send(label.Data)
 }
 
-// BulkTrackShipments tracks multiple shipments (admin only)
+// BulkTrackShipments tracks several of our own shipments at once.
+//
+// POST /admin/shipping/bulk-track. Each tracking number is resolved to an
+// order first, so this cannot be used to look up arbitrary third-party
+// consignments through our carrier accounts.
 func (h *ShippingHandler) BulkTrackShipments(c *fiber.Ctx) error {
 	var req struct {
 		Waybills []string `json:"waybills"`
 	}
-
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"message": "Invalid request body",
 		})
 	}
-
 	if len(req.Waybills) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
 			"message": "At least one waybill is required",
 		})
 	}
-
-	// Track each waybill
-	results := make(map[string]interface{})
-	for _, waybill := range req.Waybills {
-		tracking, err := h.DelhiveryService.TrackShipment(waybill)
-		if err != nil {
-			results[waybill] = fiber.Map{
-				"error": err.Error(),
-			}
-		} else {
-			results[waybill] = tracking
-		}
+	// Bound the fan-out: each entry is a carrier round trip.
+	const maxBulk = 50
+	if len(req.Waybills) > maxBulk {
+		req.Waybills = req.Waybills[:maxBulk]
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"data":    results,
-	})
+	ctx := c.UserContext()
+	results := make(map[string]interface{}, len(req.Waybills))
+	for _, waybill := range req.Waybills {
+		waybill = strings.TrimSpace(waybill)
+		if waybill == "" {
+			continue
+		}
+		var order models.Order
+		if err := h.DB.Collections().Orders.FindOne(ctx, bson.M{
+			"$or": []bson.M{
+				{"shipping_info.waybill": waybill},
+				{"shipping_info.tracking_number": waybill},
+			},
+		}).Decode(&order); err != nil {
+			results[waybill] = fiber.Map{"error": "no order found for this tracking number"}
+			continue
+		}
+		tracking, err := h.Service.Track(ctx, &order)
+		if err != nil {
+			results[waybill] = fiber.Map{"error": shipping.AsError(err).Message}
+			continue
+		}
+		results[waybill] = tracking
+	}
+	return c.JSON(fiber.Map{"success": true, "data": results})
 }
 
-// RequestPickup requests a pickup from Delhivery (admin only)
+// RequestPickup schedules a carrier pickup for one order's shipment.
+//
+// POST /admin/shipping/request-pickup. It now takes an order so the pickup can
+// be made idempotent per shipment; the previous form took a date and a package
+// count and could be fired repeatedly with no record of what it booked.
 func (h *ShippingHandler) RequestPickup(c *fiber.Ctx) error {
-	var req struct {
-		PickupDate       string `json:"pickupDate"`       // YYYY-MM-DD format
-		PickupTime       string `json:"pickupTime"`       // HH:MM:SS format (e.g., "10:00:00")
-		ExpectedPackages int    `json:"expectedPackages"` // Number of packages to be picked up
+	user, ok := c.Locals("user").(*middleware.TokenMetadata)
+	if !ok || user.Role != "admin" {
+		return authError(c, errNotAdmin)
 	}
 
-	if err := c.BodyParser(&req); err != nil {
+	var req struct {
+		OrderID string `json:"orderId"`
+	}
+	_ = c.BodyParser(&req)
+	objID, err := primitive.ObjectIDFromHex(strings.TrimSpace(req.OrderID))
+	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"success": false,
-			"message": "Invalid request body",
+			"message": "A valid orderId is required to schedule a pickup",
 		})
 	}
 
-	if req.PickupDate == "" {
-		req.PickupDate = time.Now().Format("2006-01-02")
-	}
-	if req.PickupTime == "" {
-		req.PickupTime = "10:00:00" // Default pickup time
-	}
-	if req.ExpectedPackages <= 0 {
-		req.ExpectedPackages = 1
-	}
-
-	err := h.DelhiveryService.RequestPickup(req.PickupDate, req.PickupTime, req.ExpectedPackages)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+	ctx := c.UserContext()
+	var order models.Order
+	if err := h.DB.Collections().Orders.FindOne(ctx, bson.M{"_id": objID}).Decode(&order); err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"success": false,
-			"message": "Failed to request pickup",
-			"error":   err.Error(),
+			"message": "Order not found",
 		})
 	}
 
+	pickup, err := h.Service.SchedulePickup(ctx, &order)
+	if err != nil {
+		return shippingError(c, err, "pickup for order "+order.ID.Hex())
+	}
+	message := "Pickup requested successfully"
+	if pickup.AlreadyScheduled {
+		message = "Pickup was already scheduled for this shipment"
+	}
 	return c.JSON(fiber.Map{
 		"success": true,
-		"message": "Pickup requested successfully",
-		"date":    req.PickupDate,
+		"message": message,
+		"date":    pickup.ScheduledDate,
+		"data":    pickup,
 	})
 }
 
-// Unused import fix
-var _ = io.EOF
+// adminOrder loads an order for an admin-only shipping operation.
+func (h *ShippingHandler) adminOrder(c *fiber.Ctx) (*models.Order, error) {
+	user, ok := c.Locals("user").(*middleware.TokenMetadata)
+	if !ok {
+		return nil, errNotAuthenticated
+	}
+	if user.Role != "admin" {
+		return nil, errNotAdmin
+	}
+	objID, err := primitive.ObjectIDFromHex(strings.TrimSpace(c.Params("orderID")))
+	if err != nil {
+		return nil, errBadOrderID
+	}
+	var order models.Order
+	if err := h.DB.Collections().Orders.FindOne(c.UserContext(), bson.M{"_id": objID}).Decode(&order); err != nil {
+		return nil, errOrderNotVisible
+	}
+	return &order, nil
+}
+
+func (h *ShippingHandler) invalidateOrderCache(c *fiber.Ctx, order *models.Order) {
+	ctx := c.UserContext()
+	h.DB.CacheDel(ctx, "order:"+order.ID.Hex())
+	h.DB.CacheDel(ctx, "orders:"+order.UserID.Hex())
+}

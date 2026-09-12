@@ -1,0 +1,7 @@
+{
+  "message": "The given data was invalid.",
+  "errors": {
+    "billing_pincode": ["The billing pincode field is required."],
+    "order_items": ["The order items field is required."]
+  }
+}

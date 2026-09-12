@@ -14,8 +14,8 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
+	shippingsetup "github.com/shivam-mishra-20/mak-watches-be/internal/shipping/setup"
 )
 
 // routeDeps carries everything the domain registrars need.
@@ -56,6 +56,9 @@ type routeDeps struct {
 	homeContent *HomeContentHandler
 	review      *ReviewHandler
 	shipping    *ShippingHandler
+	shippingV1  *ShippingV1Handler
+	// shipHooks serves the authenticated carrier callbacks for every provider.
+	shipHooks   *ShippingWebhookHandler
 	account     *AccountHandler
 	upload      *UploadHandler
 	settings    *SettingsHandler
@@ -80,11 +83,24 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 	fb := firebase.NewProvider(cfg.FirebaseCredentialsJSON, cfg.FirebaseBucketName)
 	media := mediaindex.New(fb, mediaindex.DefaultTTL)
 
-	shipmentQueue, err := queue.NewShipmentQueue(cfg.SQSQueueURL)
-	if err != nil {
-		log.Printf("[SETUP] WARNING: SQS shipment queue unavailable, falling back to synchronous Delhivery calls: %v", err)
-		shipmentQueue = nil
-	}
+	// One shipping service for the process, with both carriers registered.
+	// Every shipping caller shares it, so there is a single Shiprocket token
+	// cache and a single Delhivery client rather than one per handler.
+	shippingSvc := shippingsetup.Build(db.MongoDB, cfg, nil)
+	shippingsetup.EnsureIndexes(shippingSvc)
+
+	// Payment uniqueness guard. Best-effort and non-fatal, like the shipping
+	// indexes: the API must still boot if Mongo is briefly unavailable, and
+	// checkout's own pre-insert check still applies.
+	func() {
+		idxCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := db.EnsureOrderIndexes(idxCtx); err != nil {
+			log.Printf("[ORDERS] WARNING: could not create the razorpay payment uniqueness index: %v", err)
+			log.Printf("[ORDERS] If this reports a duplicate key, existing orders already share a " +
+				"razorpay_payment_id and must be reconciled before the index can be built.")
+		}
+	}()
 
 	d := &routeDeps{
 		app:      app,
@@ -96,8 +112,8 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		auth:        NewAuthHandler(db, cfg),
 		product:     NewProductHandler(db, cfg, fb, media),
 		cart:        NewCartHandler(db, cfg),
-		order:       NewOrderHandler(db, cfg, shipmentQueue),
-		payment:     NewPaymentHandler(db, cfg),
+		order:       NewOrderHandler(db, cfg, shippingSvc),
+		payment:     NewPaymentHandler(db, cfg, shippingSvc),
 		rec:         NewRecommendationHandler(db, cfg),
 		userProfile: NewUserProfileHandler(db, cfg),
 		wishlist:    NewWishlistHandler(db, cfg),
@@ -106,7 +122,9 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		category:    NewCategoryHandler(db, cfg),
 		homeContent: NewHomeContentHandler(db, cfg),
 		review:      NewReviewHandler(db, cfg),
-		shipping:    NewShippingHandler(db, cfg),
+		shipping:    NewShippingHandler(db, cfg, shippingSvc),
+		shippingV1:  NewShippingV1Handler(db, cfg, shippingSvc),
+		shipHooks:   NewShippingWebhookHandler(shippingSvc),
 		account:     NewAccountHandler(db, cfg),
 		upload:      NewUploadHandler(cfg, fb),
 		settings:    NewSettingsHandler(db.MongoDB, fb),

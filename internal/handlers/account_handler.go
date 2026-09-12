@@ -149,15 +149,16 @@ func (h *AccountHandler) GetAccountOrders(c *fiber.Ctx) error {
 	// This will make c.Params("userID") return user.UserID.Hex() if not set
 	c.Params("userID", user.UserID.Hex())
 
-	// Use the existing OrderHandler's GetOrders method
+	// Use the existing OrderHandler's GetOrders method. No shipping service is
+	// passed: this is a read path and never books, cancels or tracks anything.
 	orderHandler := NewOrderHandler(h.DB, h.Config, nil)
 	return orderHandler.GetOrders(c)
 }
 
 // GetAccountOrder retrieves a specific order for the current user
 func (h *AccountHandler) GetAccountOrder(c *fiber.Ctx) error {
-	// We can reuse the existing OrderHandler's GetOrder method
-	// It already checks if the user is authorized to view the order
+	// We can reuse the existing OrderHandler's GetOrder method.
+	// Read-only, so no shipping service is required.
 	orderHandler := NewOrderHandler(h.DB, h.Config, nil)
 	return orderHandler.GetOrder(c)
 }

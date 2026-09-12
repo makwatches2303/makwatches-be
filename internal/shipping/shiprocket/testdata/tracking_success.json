@@ -1,0 +1,34 @@
+{
+  "tracking_data": {
+    "track_status": 1,
+    "shipment_status": 7,
+    "shipment_track": [
+      {
+        "id": 220102,
+        "awb_code": "1491110022334",
+        "courier_company_id": 51,
+        "shipment_id": 15151515,
+        "order_id": 16161616,
+        "pickup_date": "2024-07-02 10:15:00",
+        "delivered_date": "2024-07-05 15:42:00",
+        "weight": "0.50",
+        "packages": 1,
+        "current_status": "Delivered",
+        "delivered_to": "Jetpur",
+        "destination": "Jetpur",
+        "consignee_name": "",
+        "origin": "Rajkot",
+        "courier_name": "Delhivery Surface",
+        "edd": null,
+        "pod": "Available"
+      }
+    ],
+    "shipment_track_activities": [
+      { "date": "2024-07-02 10:15:00", "status": "PKD", "activity": "Picked Up", "location": "Rajkot", "sr-status": "42", "sr-status-label": "PICKED UP" },
+      { "date": "2024-07-04 08:05:00", "status": "IT", "activity": "In Transit", "location": "Ahmedabad", "sr-status": "18", "sr-status-label": "IN TRANSIT" },
+      { "date": "2024-07-05 15:42:00", "status": "DLVD", "activity": "Delivered", "location": "Jetpur", "sr-status": "7", "sr-status-label": "DELIVERED" }
+    ],
+    "track_url": "https://shiprocket.co/tracking/1491110022334",
+    "etd": "2024-07-05"
+  }
+}

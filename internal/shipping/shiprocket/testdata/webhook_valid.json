@@ -1,0 +1,28 @@
+{
+  "awb": "1491110022334",
+  "courier_name": "Delhivery Surface",
+  "current_status": "Delivered",
+  "current_status_id": 7,
+  "shipment_status": "DELIVERED",
+  "shipment_status_id": 7,
+  "current_timestamp": "2024-07-05 15:42:00",
+  "order_id": "13905312",
+  "sr_order_id": 16161616,
+  "shipment_id": 15151515,
+  "awb_assigned_date": "2024-07-01 12:30:00",
+  "pickup_scheduled_date": "2024-07-02 10:00:00",
+  "etd": "2024-07-05",
+  "is_return": 0,
+  "channel_id": "",
+  "pod_status": "Available",
+  "scans": [
+    {
+      "date": "2024-07-05 15:42:00",
+      "activity": "Delivered",
+      "location": "Jetpur",
+      "sr-status": "7"
+    }
+  ],
+  "channel_order_id": "MAK-20240701-001",
+  "channel": "CUSTOM"
+}

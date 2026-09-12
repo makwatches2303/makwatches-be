@@ -1,0 +1,23 @@
+{
+  "awb": "1491110022334",
+  "courier_name": "Delhivery Surface",
+  "current_status": "In Transit",
+  "current_status_id": 18,
+  "shipment_status": "IN TRANSIT",
+  "shipment_status_id": 18,
+  "current_timestamp": "2024-07-04 08:05:00",
+  "order_id": "13905312",
+  "sr_order_id": 16161616,
+  "shipment_id": 15151515,
+  "is_return": 0,
+  "scans": [
+    {
+      "date": "2024-07-04 08:05:00",
+      "activity": "In Transit",
+      "location": "Ahmedabad",
+      "sr-status": "18"
+    }
+  ],
+  "channel_order_id": "MAK-20240701-001",
+  "channel": "CUSTOM"
+}

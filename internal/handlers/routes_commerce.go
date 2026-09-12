@@ -71,11 +71,21 @@ func registerShippingRoutes(d *routeDeps) {
 }
 
 // registerWebhookRoutes wires the public endpoints called by payment and
-// logistics providers. These are unauthenticated by design; each handler is
-// responsible for verifying its own provider signature.
+// logistics providers.
+//
+// Public in the sense of being reachable without a MAK session, never
+// unauthenticated: each handler verifies its provider's own credential before
+// reading or writing anything. The shipping callbacks require a shared secret
+// (Shiprocket's x-api-key, a configured token for Delhivery) and refuse the
+// request outright when that secret is not configured -- fail closed, because
+// a shipping callback can move an order to "delivered".
 func registerWebhookRoutes(d *routeDeps) {
 	d.app.Post("/webhooks/razorpay", d.payment.RazorpayWebhook)
-	d.app.Post("/webhooks/delhivery", d.shipping.DelhiveryWebhook)
+	// Same path as before so an already-configured Delhivery callback keeps
+	// working; it is now authenticated.
+	d.app.Post("/webhooks/delhivery", d.shipHooks.DelhiveryWebhook)
+	d.app.Post("/webhooks/shipping/shiprocket", d.shipHooks.ShiprocketWebhook)
+	d.app.Post("/webhooks/shipping/delhivery", d.shipHooks.DelhiveryWebhook)
 }
 
 // registerRecommendationRoutes wires the authenticated recommendation surface.
