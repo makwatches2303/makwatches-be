@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -846,5 +847,237 @@ func (h *ReviewHandler) MarkReviewHelpful(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
 		"message": "Review marked as helpful",
+	})
+}
+
+// GetAllReviews lists reviews across every product for moderation
+// (admin only). GET /admin/reviews
+//
+// Optional query params: page, limit (default 1/20), productId, rating
+// (exact match) and q (free-text, matches title/comment). Each review is
+// joined with its product name and reviewer name, same as
+// GetProductReviews/GetUserReviews do for their own single-sided joins.
+func (h *ReviewHandler) GetAllReviews(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	page := 1
+	limit := 20
+	if c.Query("page") != "" {
+		if _, err := fmt.Sscanf(c.Query("page"), "%d", &page); err != nil || page < 1 {
+			page = 1
+		}
+	}
+	if c.Query("limit") != "" {
+		if _, err := fmt.Sscanf(c.Query("limit"), "%d", &limit); err != nil || limit < 1 || limit > 100 {
+			limit = 20
+		}
+	}
+
+	filter := bson.M{}
+	if productIDStr := c.Query("productId"); productIDStr != "" {
+		if productID, err := primitive.ObjectIDFromHex(productIDStr); err == nil {
+			filter["product_id"] = productID
+		}
+	}
+	if ratingStr := c.Query("rating"); ratingStr != "" {
+		var rating float64
+		if _, err := fmt.Sscanf(ratingStr, "%f", &rating); err == nil {
+			filter["rating"] = rating
+		}
+	}
+	if search := c.Query("q"); search != "" {
+		pattern := regexp.QuoteMeta(search)
+		filter["$or"] = bson.A{
+			bson.M{"title": bson.M{"$regex": pattern, "$options": "i"}},
+			bson.M{"comment": bson.M{"$regex": pattern, "$options": "i"}},
+		}
+	}
+
+	reviewCollection := h.DB.Collections().Reviews
+
+	totalCount, err := reviewCollection.CountDocuments(ctx, filter)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to count reviews",
+			"error":   err.Error(),
+		})
+	}
+	meta := fiber.Map{
+		"page":  page,
+		"limit": limit,
+		"total": totalCount,
+		"pages": (totalCount + int64(limit) - 1) / int64(limit),
+	}
+
+	findOptions := options.Find().
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetSkip(int64((page - 1) * limit)).
+		SetLimit(int64(limit))
+	cursor, err := reviewCollection.Find(ctx, filter, findOptions)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to retrieve reviews",
+			"error":   err.Error(),
+		})
+	}
+	defer cursor.Close(ctx)
+
+	var reviews []models.Review
+	if err := cursor.All(ctx, &reviews); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to decode reviews",
+			"error":   err.Error(),
+		})
+	}
+
+	// Batch-join user names and product names, same map-by-ID approach
+	// GetProductReviews/GetUserReviews use for their own single-sided join.
+	userIDs := make([]primitive.ObjectID, 0, len(reviews))
+	productIDs := make([]primitive.ObjectID, 0, len(reviews))
+	for _, r := range reviews {
+		userIDs = append(userIDs, r.UserID)
+		productIDs = append(productIDs, r.ProductID)
+	}
+
+	users := make(map[primitive.ObjectID]models.User)
+	if len(userIDs) > 0 {
+		userCursor, err := h.DB.Collections().Users.Find(ctx, bson.M{"_id": bson.M{"$in": userIDs}})
+		if err == nil {
+			var userList []models.User
+			if err := userCursor.All(ctx, &userList); err == nil {
+				for _, u := range userList {
+					users[u.ID] = u
+				}
+			}
+			userCursor.Close(ctx)
+		}
+	}
+
+	products := make(map[primitive.ObjectID]models.Product)
+	if len(productIDs) > 0 {
+		productCursor, err := h.DB.Collections().Products.Find(ctx, bson.M{"_id": bson.M{"$in": productIDs}})
+		if err == nil {
+			var productList []models.Product
+			if err := productCursor.All(ctx, &productList); err == nil {
+				for _, p := range productList {
+					products[p.ID] = p
+				}
+			}
+			productCursor.Close(ctx)
+		}
+	}
+
+	response := make([]fiber.Map, 0, len(reviews))
+	for _, review := range reviews {
+		userName := "Anonymous"
+		if u, ok := users[review.UserID]; ok {
+			userName = u.Name
+		}
+		productName := "Unknown product"
+		if p, ok := products[review.ProductID]; ok {
+			productName = p.Name
+		}
+
+		response = append(response, fiber.Map{
+			"id":          review.ID,
+			"productId":   review.ProductID,
+			"productName": productName,
+			"userId":      review.UserID,
+			"userName":    userName,
+			"rating":      review.Rating,
+			"title":       review.Title,
+			"comment":     review.Comment,
+			"photoUrls":   review.PhotoURLs,
+			"helpful":     review.Helpful,
+			"verified":    review.Verified,
+			"createdAt":   review.CreatedAt,
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "Reviews retrieved successfully",
+		"data":    response,
+		"meta":    meta,
+	})
+}
+
+// DeleteReviewAdmin removes any review regardless of who wrote it (admin
+// only). DELETE /admin/reviews/:id
+//
+// This is DeleteReview's moderation counterpart: that handler scopes the
+// delete to `user_id: <the caller>` so a customer can only remove their own
+// review; this one has no such constraint, since the caller here is trusted
+// (JWT + admin role, enforced by the /admin route group) to remove someone
+// else's.
+func (h *ReviewHandler) DeleteReviewAdmin(c *fiber.Ctx) error {
+	ctx := c.Context()
+
+	reviewID, err := primitive.ObjectIDFromHex(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Invalid review ID",
+		})
+	}
+
+	reviewCollection := h.DB.Collections().Reviews
+	var existingReview models.Review
+	err = reviewCollection.FindOne(ctx, bson.M{"_id": reviewID}).Decode(&existingReview)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"success": false,
+				"message": "Review not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to check review",
+			"error":   err.Error(),
+		})
+	}
+
+	productID := existingReview.ProductID
+
+	if _, err := reviewCollection.DeleteOne(ctx, bson.M{"_id": reviewID}); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to delete review",
+			"error":   err.Error(),
+		})
+	}
+
+	// Recompute the product's rating the same way DeleteReview does.
+	productCollection := h.DB.Collections().Products
+	cursor, err := reviewCollection.Find(ctx, bson.M{"product_id": productID})
+	if err == nil {
+		defer cursor.Close(ctx)
+		var remaining []models.Review
+		if err := cursor.All(ctx, &remaining); err == nil {
+			if len(remaining) > 0 {
+				var totalRating float64
+				for _, r := range remaining {
+					totalRating += r.Rating
+				}
+				productCollection.UpdateOne(ctx, bson.M{"_id": productID}, bson.M{"$set": bson.M{
+					"avg_rating":    totalRating / float64(len(remaining)),
+					"ratings_count": len(remaining),
+				}})
+			} else {
+				productCollection.UpdateOne(ctx, bson.M{"_id": productID}, bson.M{"$set": bson.M{
+					"avg_rating":    0,
+					"ratings_count": 0,
+				}})
+			}
+		}
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"success": true,
+		"message": "Review deleted successfully",
 	})
 }

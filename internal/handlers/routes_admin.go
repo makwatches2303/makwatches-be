@@ -14,6 +14,16 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminShippingRoutes(d)
 	registerAdminStorefrontRoutes(d)
 	registerAdminAnalyticsRoutes(d)
+	registerAdminReviewRoutes(d)
+}
+
+// registerAdminReviewRoutes wires review moderation: browsing every review
+// across products (not just one product's, or one user's own) and deleting
+// any of them.
+func registerAdminReviewRoutes(d *routeDeps) {
+	reviews := d.admin.Group("/reviews")
+	reviews.Get("/", d.review.GetAllReviews)
+	reviews.Delete("/:id", d.review.DeleteReviewAdmin)
 }
 
 // registerAdminAnalyticsRoutes wires the admin dashboard's aggregate

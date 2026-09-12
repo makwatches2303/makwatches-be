@@ -140,6 +140,7 @@ func TestAdminRoutesRequireAuthentication(t *testing.T) {
 		{fiber.MethodGet, "/admin/home-content/hero-slides"},
 		{fiber.MethodGet, "/admin/subscribers"},
 		{fiber.MethodGet, "/admin/analytics/summary"},
+		{fiber.MethodGet, "/admin/reviews"},
 		{fiber.MethodPost, "/upload"},
 	}
 
