@@ -15,6 +15,15 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminStorefrontRoutes(d)
 	registerAdminAnalyticsRoutes(d)
 	registerAdminReviewRoutes(d)
+	registerAdminSecurityRoutes(d)
+}
+
+// registerAdminSecurityRoutes wires the admin dashboard's Security tab:
+// changing your own password, and recent admin sign-ins.
+func registerAdminSecurityRoutes(d *routeDeps) {
+	security := d.admin.Group("/security")
+	security.Put("/password", d.auth.ChangePassword)
+	security.Get("/login-activity", d.auth.GetLoginActivity)
 }
 
 // registerAdminReviewRoutes wires review moderation: browsing every review

@@ -236,6 +236,15 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		SameSite: "Strict",
 	})
 
+	// Admin logins get an audit trail entry -- the security tab's "recent
+	// sign-ins" list. Customer logins don't; there's no admin-facing surface
+	// asking for those, and it would be a lot more audit volume for no
+	// consumer. Best-effort: a failed audit write must not fail the login
+	// that already succeeded.
+	if user.Role == "admin" {
+		recordAdminLoginAudit(ctx, h.DB, user.ID, user.Email, c)
+	}
+
 	// Return user info and token
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"success": true,
