@@ -3,6 +3,7 @@ package handlers
 import (
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 )
 
@@ -86,6 +87,15 @@ func registerWebhookRoutes(d *routeDeps) {
 	d.app.Post("/webhooks/delhivery", d.shipHooks.DelhiveryWebhook)
 	d.app.Post("/webhooks/shipping/shiprocket", d.shipHooks.ShiprocketWebhook)
 	d.app.Post("/webhooks/shipping/delhivery", d.shipHooks.DelhiveryWebhook)
+	// Shiprocket webhook aliases: Shiprocket disallows keywords "shiprocket", "kartrocket", "sr", "kr" in URL
+	d.app.Post("/webhooks/carrier", d.shipHooks.ShiprocketWebhook)
+	d.app.Post("/webhooks/tracking", d.shipHooks.ShiprocketWebhook)
+	d.app.Get("/webhooks/carrier", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "active", "service": "carrier-webhook"})
+	})
+	d.app.Get("/webhooks/tracking", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "active", "service": "carrier-webhook"})
+	})
 }
 
 // registerRecommendationRoutes wires the authenticated recommendation surface.

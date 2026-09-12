@@ -98,14 +98,13 @@ func (h *ShippingWebhookHandler) handle(c *fiber.Ctx, providerName string) error
 	if err := h.Service.ApplyWebhookEvent(c.UserContext(), event); err != nil {
 		se := shipping.AsError(err)
 		if se.Code == shipping.CodeShipmentNotFound {
-			// Authenticated but addressed to something we do not have. Worth
-			// surfacing rather than silently accepting: with the endpoint now
-			// authenticated, this is a real signal, not background noise.
+			// Authenticated but addressed to something we do not have yet (e.g. Test Webhook from carrier dashboard).
+			// We acknowledge with 200 OK so carrier webhook verification passes and stale retries cease.
 			log.Printf("[WEBHOOK] %s event for unknown shipment (awb=%q shipment=%q order=%q)",
 				providerName, event.TrackingNumber, event.ProviderShipmentID, event.ProviderOrderID)
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"success": false,
-				"message": "Unknown shipment",
+			return c.Status(fiber.StatusOK).JSON(fiber.Map{
+				"success": true,
+				"message": "Webhook acknowledged; shipment not found in database",
 			})
 		}
 		log.Printf("[WEBHOOK] failed to apply %s event: %s", providerName, se.Detail)
