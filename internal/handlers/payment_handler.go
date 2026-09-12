@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -119,6 +120,20 @@ func (h *PaymentHandler) CreateRazorpayOrder(c *fiber.Ctx) error {
 	}
 	if total <= 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "Cart empty"})
+	}
+
+	var reqBody struct {
+		CouponCode string `json:"couponCode"`
+	}
+	_ = c.BodyParser(&reqBody)
+	if strings.TrimSpace(reqBody.CouponCode) != "" {
+		code := strings.ToUpper(strings.TrimSpace(reqBody.CouponCode))
+		var coupon models.Coupon
+		if err := h.DB.Collections().Coupons.FindOne(c.Context(), bson.M{"code": code}).Decode(&coupon); err == nil {
+			if disc, err := coupon.CalculateDiscount(total); err == nil {
+				total = math.Max(0, total-disc)
+			}
+		}
 	}
 
 	amountPaise := int64(math.Round(total * 100))
