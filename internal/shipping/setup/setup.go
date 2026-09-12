@@ -72,9 +72,16 @@ func Build(db *mongo.Database, cfg *config.Config, delhiverySvc *services.Delhiv
 	switch primary {
 	case shipping.ProviderShiprocket, shipping.ProviderDelhivery:
 	default:
-		log.Printf("[SHIPPING] SHIPPING_PROVIDER=%q is not a known provider; using %q",
-			primary, shipping.ProviderShiprocket)
-		primary = shipping.ProviderShiprocket
+		// When primary is "all" or unset, prefer whichever provider actually has credentials configured.
+		if cfg.ShiprocketEmail != "" && cfg.ShiprocketPassword != "" {
+			primary = shipping.ProviderShiprocket
+		} else if cfg.DelhiveryAPIToken != "" {
+			primary = shipping.ProviderDelhivery
+		} else {
+			primary = shipping.ProviderShiprocket
+		}
+		log.Printf("[SHIPPING] SHIPPING_PROVIDER=%q resolved to primary provider %q",
+			cfg.ShippingProvider, primary)
 	}
 
 	svcCfg := shipping.ServiceConfig{

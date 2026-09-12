@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -367,7 +368,11 @@ func (h *ShippingHandler) GetShippingLabel(c *fiber.Ctx) error {
 
 	filename := label.Filename
 	if filename == "" {
-		filename = "label.pdf"
+		if order.OrderNumber != "" {
+			filename = fmt.Sprintf("label-%s.pdf", order.OrderNumber)
+		} else {
+			filename = fmt.Sprintf("label-%s.pdf", order.ID.Hex())
+		}
 	}
 	c.Set(fiber.HeaderContentType, label.ContentType)
 	c.Set(fiber.HeaderContentDisposition, `inline; filename="`+filename+`"`)

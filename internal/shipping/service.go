@@ -957,6 +957,9 @@ func (s *Service) Label(ctx context.Context, order *models.Order) (*Label, error
 	if err != nil {
 		return nil, err
 	}
+	if strings.EqualFold(sh.Status, StatusCancelled) || (order != nil && strings.EqualFold(order.Status, "cancelled")) {
+		return nil, Errf(CodeLabelUnavailable, "cannot generate a shipping label for a cancelled shipment")
+	}
 	provider, err := s.Provider(sh.Provider)
 	if err != nil {
 		return nil, err
