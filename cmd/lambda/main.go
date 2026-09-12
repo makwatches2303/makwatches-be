@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"log"
+	"net/url"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -78,12 +80,32 @@ func init() {
 		BodyLimit:    10 * 1024 * 1024, // 10MB
 	})
 
-	prodOrigins := cfg.GetEnvOrDefault("ALLOWED_ORIGINS", "https://makwatches.in,https://www.makwatches.in,https://mak-watches.vercel.app")
+	prodOrigins := cfg.GetEnvOrDefault("ALLOWED_ORIGINS", "https://makwatches.in,https://www.makwatches.in,https://admin.makwatches.in,http://admin.makwatches.in,https://mak-watches.vercel.app,https://makwatches-admin.vercel.app")
 	devOrigins := cfg.GetEnvOrDefault("DEV_ORIGINS", "http://localhost:4200,http://localhost:3000")
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     prodOrigins + "," + devOrigins,
+		AllowOrigins: prodOrigins + "," + devOrigins,
+		AllowOriginsFunc: func(origin string) bool {
+			if origin == "" {
+				return false
+			}
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			host := u.Hostname()
+			if host == "makwatches.in" || strings.HasSuffix(host, ".makwatches.in") {
+				return true
+			}
+			if host == "localhost" || host == "127.0.0.1" {
+				return true
+			}
+			if strings.HasSuffix(host, ".vercel.app") {
+				return true
+			}
+			return false
+		},
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-CSRF-Token",
 		AllowCredentials: true,
 		ExposeHeaders:    "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers",
 	}))

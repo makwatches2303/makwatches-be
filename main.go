@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,12 +69,32 @@ func main() {
 
 	// Configure CORS for production and development
 	// Allow list is CSV; default includes production domains and Vercel preview, plus common local dev ports
-	prodOrigins := cfg.GetEnvOrDefault("ALLOWED_ORIGINS", "https://makwatches.in,https://www.makwatches.in,https://mak-watches.vercel.app")
+	prodOrigins := cfg.GetEnvOrDefault("ALLOWED_ORIGINS", "https://makwatches.in,https://www.makwatches.in,https://admin.makwatches.in,http://admin.makwatches.in,https://mak-watches.vercel.app,https://makwatches-admin.vercel.app")
 	devOrigins := cfg.GetEnvOrDefault("DEV_ORIGINS", "http://localhost:4200,http://localhost:3000")
 	allOrigins := prodOrigins + "," + devOrigins
 
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     allOrigins,
+		AllowOrigins: allOrigins,
+		AllowOriginsFunc: func(origin string) bool {
+			if origin == "" {
+				return false
+			}
+			u, err := url.Parse(origin)
+			if err != nil {
+				return false
+			}
+			host := u.Hostname()
+			if host == "makwatches.in" || strings.HasSuffix(host, ".makwatches.in") {
+				return true
+			}
+			if host == "localhost" || host == "127.0.0.1" {
+				return true
+			}
+			if strings.HasSuffix(host, ".vercel.app") {
+				return true
+			}
+			return false
+		},
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,PATCH",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With, X-CSRF-Token",
 		AllowCredentials: true,
