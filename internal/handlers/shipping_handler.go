@@ -305,6 +305,99 @@ func (h *ShippingHandler) CheckPincode(c *fiber.Ctx) error {
 	})
 }
 
+// CheckoutShippingOption represents a normalized delivery option for checkout
+type CheckoutShippingOption struct {
+	ID                    string  `json:"id"`
+	Provider              string  `json:"provider"`
+	ProviderCourierID     string  `json:"providerCourierId"`
+	CourierName           string  `json:"courierName"`
+	Charge                float64 `json:"charge"`
+	EstimatedDeliveryDays int     `json:"estimatedDeliveryDays,omitempty"`
+	ETD                   string  `json:"etd,omitempty"`
+	CODAvailable          bool    `json:"codAvailable"`
+	Mode                  string  `json:"mode,omitempty"`
+	Recommended           bool    `json:"recommended,omitempty"`
+	Quote                 string  `json:"quote"`
+}
+
+// GetCheckoutShippingOptions returns delivery courier options for cart checkout
+func (h *ShippingHandler) GetCheckoutShippingOptions(c *fiber.Ctx) error {
+	var req struct {
+		Pincode string `json:"pincode"`
+		COD     bool   `json:"cod"`
+	}
+	_ = c.BodyParser(&req)
+
+	pincode := strings.TrimSpace(req.Pincode)
+	if pincode == "" {
+		pincode = strings.TrimSpace(c.Query("pincode"))
+	}
+	if len(pincode) < 6 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "A valid 6-digit destination pincode is required",
+		})
+	}
+
+	serviceability, err := h.DelhiveryService.CheckPincodeServiceability(pincode)
+	if err != nil {
+		if errors.Is(err, services.ErrPincodeNotServiceable) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"success": false,
+				"message": "Pincode is not serviceable by courier partners",
+			})
+		}
+		// Carrier API unreachable or credentials issue: do not block customer checkout
+		log.Printf("[SHIPPING-OPTIONS] ⚠️ Carrier check failed for %s (%v), using default express option", pincode, err)
+		serviceability = &services.PincodeServiceability{
+			Pincode: pincode,
+			COD:     true,
+			Prepaid: true,
+		}
+	}
+
+	var options []CheckoutShippingOption
+	// If customer explicitly requested COD and carrier does not support COD at this pincode
+	if req.COD && !serviceability.COD {
+		return c.JSON(fiber.Map{
+			"success":  true,
+			"pincode":  pincode,
+			"provider": "delhivery",
+			"cod":      false,
+			"prepaid":  serviceability.Prepaid,
+			"options":  options,
+			"message":  "Cash on delivery is not available for this pincode. Please select Pay Online.",
+		})
+	}
+
+	modeStr := "online"
+	if req.COD {
+		modeStr = "cod"
+	}
+	quote := fmt.Sprintf("quote_delhivery_%s_%s_%d", pincode, modeStr, time.Now().Unix())
+	options = append(options, CheckoutShippingOption{
+		ID:                    "delhivery-express",
+		Provider:              "delhivery",
+		ProviderCourierID:     "delhivery_surface",
+		CourierName:           "Delhivery Express (Insured)",
+		Charge:                0, // Free complimentary insured delivery for MAK Watches
+		EstimatedDeliveryDays: 3,
+		CODAvailable:          serviceability.COD,
+		Mode:                  "Express",
+		Recommended:           true,
+		Quote:                 quote,
+	})
+
+	return c.JSON(fiber.Map{
+		"success":  true,
+		"pincode":  pincode,
+		"provider": "delhivery",
+		"cod":      serviceability.COD,
+		"prepaid":  serviceability.Prepaid,
+		"options":  options,
+	})
+}
+
 // DelhiveryWebhook handles status updates from Delhivery.
 //
 // Unlike RazorpayWebhook, Delhivery does not sign its callbacks with an
