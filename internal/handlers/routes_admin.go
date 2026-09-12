@@ -16,6 +16,7 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminAnalyticsRoutes(d)
 	registerAdminReviewRoutes(d)
 	registerAdminSecurityRoutes(d)
+	registerAdminCouponRoutes(d)
 }
 
 // registerAdminSecurityRoutes wires the admin dashboard's Security tab:
@@ -121,4 +122,15 @@ func registerAdminShippingRoutes(d *routeDeps) {
 	shipping.Get("/orders/:orderID/label", d.shipping.GetShippingLabel)
 	shipping.Post("/bulk-track", d.shipping.BulkTrackShipments)
 	shipping.Post("/request-pickup", d.shipping.RequestPickup)
+}
+
+func registerAdminCouponRoutes(d *routeDeps) {
+	coupons := d.admin.Group("/coupons")
+
+	coupons.Get("/", d.coupon.ListCoupons)
+	coupons.Post("/", d.coupon.CreateCoupon)
+	coupons.Get("/:id", d.coupon.GetCoupon)
+	coupons.Put("/:id", d.coupon.UpdateCoupon)
+	coupons.Delete("/:id", d.coupon.DeleteCoupon)
+	coupons.Patch("/:id/toggle", d.coupon.ToggleCoupon)
 }

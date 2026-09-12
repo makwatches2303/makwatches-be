@@ -64,6 +64,7 @@ type routeDeps struct {
 	subscriber  *SubscriberHandler
 	cartTracker *CartTrackerHandler
 	analytics   *AnalyticsHandler
+	coupon      *CouponHandler
 }
 
 // SetupRoutes configures all application routes.
@@ -112,6 +113,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		catalogV1:   NewCatalogV1Handler(db, cfg, media),
 		storefront:  NewStorefrontHandler(db, cfg),
 		analytics:   NewAnalyticsHandler(db, cfg),
+		coupon:      NewCouponHandler(db, cfg),
 	}
 
 	wa := whatsapp.NewClient(cfg)
@@ -138,6 +140,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 	registerWebhookRoutes(d)
 	registerAdminRoutes(d)
 	registerMarketingRoutes(d)
+	registerCouponRoutes(d)
 
 	// New surface, additive: everything above keeps working unchanged.
 	registerV1Routes(d)

@@ -64,6 +64,9 @@ type Order struct {
 	OrderNumber     string             `json:"orderNumber" bson:"order_number"` // Human-readable order number like MAK-20251214-001
 	UserID          primitive.ObjectID `json:"userId" bson:"user_id"`           // <-- ensure json:"userId"
 	Items           []OrderItem        `json:"items" bson:"items"`
+	Subtotal        float64            `json:"subtotal,omitempty" bson:"subtotal,omitempty"`
+	CouponCode      string             `json:"couponCode,omitempty" bson:"coupon_code,omitempty"`
+	DiscountAmount  float64            `json:"discountAmount,omitempty" bson:"discount_amount,omitempty"`
 	Total           float64            `json:"total" bson:"total"`
 	Status          string             `json:"status" bson:"status"`
 	PaymentStatus   string             `json:"paymentStatus" bson:"payment_status"`
@@ -83,6 +86,7 @@ type CheckoutRequest struct {
 	UserID          string      `json:"userId" validate:"required"`
 	ShippingAddress Address     `json:"shippingAddress" validate:"required"`
 	PaymentInfo     PaymentInfo `json:"paymentInfo" validate:"required"`
+	CouponCode      string      `json:"couponCode,omitempty"`
 	ClientTotal     *float64    `json:"clientTotal,omitempty" bson:"-"`
 	CustomerPhone   string      `json:"customerPhone,omitempty"` // For delivery contact
 	CustomerEmail   string      `json:"customerEmail,omitempty"` // For delivery updates

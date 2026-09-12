@@ -47,6 +47,7 @@ func (db *DBClient) Collections() struct {
 	RecFeedbacks      *mongo.Collection
 	Subscribers       *mongo.Collection
 	AbandonedCarts    *mongo.Collection
+	Coupons           *mongo.Collection
 } {
 	return struct {
 		Users             *mongo.Collection
@@ -67,6 +68,7 @@ func (db *DBClient) Collections() struct {
 		RecFeedbacks      *mongo.Collection
 		Subscribers       *mongo.Collection
 		AbandonedCarts    *mongo.Collection
+		Coupons           *mongo.Collection
 	}{
 		Users:             db.MongoDB.Collection("users"),
 		Products:          db.MongoDB.Collection("products"),
@@ -86,6 +88,7 @@ func (db *DBClient) Collections() struct {
 		RecFeedbacks:      db.MongoDB.Collection("recommendation_feedbacks"),
 		Subscribers:       db.MongoDB.Collection("subscribers"),
 		AbandonedCarts:    db.MongoDB.Collection("abandoned_carts"),
+		Coupons:           db.MongoDB.Collection("coupons"),
 	}
 }
 

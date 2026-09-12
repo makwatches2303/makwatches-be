@@ -38,5 +38,8 @@ func registerV1Routes(d *routeDeps) {
 	// Admin subscribers list
 	d.admin.Get("/subscribers", d.subscriber.ListSubscribers)
 
+	// Coupon validation
+	v1.Post("/coupons/validate", d.coupon.ValidateCoupon)
+
 	v1.Get("/health", HealthHandler)
 }

@@ -82,3 +82,8 @@ func registerRecommendationRoutes(d *routeDeps) {
 	recommendations.Get("/", d.rec.GetRecommendations)
 	recommendations.Post("/feedback", d.rec.SubmitFeedback)
 }
+
+// registerCouponRoutes wires public coupon validation endpoints
+func registerCouponRoutes(d *routeDeps) {
+	d.app.Post("/coupons/validate", d.coupon.ValidateCoupon)
+}

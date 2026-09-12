@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -186,7 +188,7 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 	// previously did -- burned inventory on every rejected signature and every
 	// client/server total mismatch, and never restored it.
 	var orderItems []models.OrderItem
-	var total float64
+	var subtotal float64
 	productsCollection := h.DB.Collections().Products
 
 	for _, item := range cartItems {
@@ -228,7 +230,35 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		}
 
 		orderItems = append(orderItems, orderItem)
-		total += orderItem.Subtotal
+		subtotal += orderItem.Subtotal
+	}
+
+	total := subtotal
+	var discountAmount float64
+	var appliedCoupon *models.Coupon
+
+	if strings.TrimSpace(req.CouponCode) != "" {
+		code := strings.ToUpper(strings.TrimSpace(req.CouponCode))
+		var coupon models.Coupon
+		err := h.DB.Collections().Coupons.FindOne(ctx, bson.M{"code": code}).Decode(&coupon)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"message": fmt.Sprintf("Invalid or non-existent coupon code '%s'", code),
+			})
+		}
+		calculatedDiscount, err := coupon.CalculateDiscount(subtotal)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"message": fmt.Sprintf("Coupon error: %s", err.Error()),
+			})
+		}
+		discountAmount = calculatedDiscount
+		total = math.Max(0, subtotal-discountAmount)
+		total = math.Round(total*100) / 100
+		appliedCoupon = &coupon
+		req.CouponCode = coupon.Code
 	}
 
 	// Verify Razorpay signature if method is razorpay
@@ -339,6 +369,9 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		OrderNumber:     orderNumber,
 		UserID:          user.UserID,
 		Items:           orderItems,
+		Subtotal:        subtotal,
+		CouponCode:      req.CouponCode,
+		DiscountAmount:  discountAmount,
 		Total:           total,
 		Status:          orderStatus,
 		PaymentStatus:   paymentStatus,
@@ -364,6 +397,15 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 			"message": "Failed to create order",
 			"error":   err.Error(),
 		})
+	}
+
+	// If a coupon was applied, increment its redemption count
+	if appliedCoupon != nil {
+		_, _ = h.DB.Collections().Coupons.UpdateOne(
+			ctx,
+			bson.M{"_id": appliedCoupon.ID},
+			bson.M{"$inc": bson.M{"usage_count": 1}},
+		)
 	}
 
 	// Log order creation success
