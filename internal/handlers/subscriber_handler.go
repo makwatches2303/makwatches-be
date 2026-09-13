@@ -100,6 +100,18 @@ func (h *SubscriberHandler) SubscribeWhatsApp(c *fiber.Ctx) error {
 			sendCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 
+			// Check if welcome flow is enabled and load active preset
+			var ws models.WhatsAppFlowSettings
+			if err := h.DB.MongoDB.Collection(WhatsAppSettingsCollection).FindOne(sendCtx, bson.M{}).Decode(&ws); err == nil {
+				if !ws.WelcomeEnabled {
+					log.Printf("[SUBSCRIBER] Welcome flow is disabled in settings; skipping message to %s", phone)
+					return
+				}
+				if ws.WelcomeTemplate != "" || ws.WelcomeImageURL != "" {
+					h.WhatsApp.UpdatePresets(ws.WelcomeTemplate, ws.AbandonedCartTemplate, ws.WelcomeImageURL)
+				}
+			}
+
 			if err := h.WhatsApp.SendWelcomeTemplate(sendCtx, phone, name); err != nil {
 				log.Printf("[SUBSCRIBER] Warning: Failed to send WhatsApp welcome to %s: %v", phone, err)
 			} else {

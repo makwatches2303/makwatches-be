@@ -64,6 +64,19 @@ func NewClient(cfg *config.Config) *Client {
 	}
 }
 
+// UpdatePresets dynamically updates the active template names and media link
+func (c *Client) UpdatePresets(welcomeTemplate, cartTemplate, welcomeImageURL string) {
+	if welcomeTemplate != "" {
+		c.WelcomeTemplate = welcomeTemplate
+	}
+	if cartTemplate != "" {
+		c.CartTemplate = cartTemplate
+	}
+	if welcomeImageURL != "" {
+		c.WelcomeImageURL = welcomeImageURL
+	}
+}
+
 // NormalizePhoneNumber standardizes phone numbers into E.164 format (+91...)
 func NormalizePhoneNumber(raw string) (string, error) {
 	cleaned := nonDigitRegex.ReplaceAllString(strings.TrimSpace(raw), "")

@@ -17,6 +17,7 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminReviewRoutes(d)
 	registerAdminSecurityRoutes(d)
 	registerAdminCouponRoutes(d)
+	registerAdminWhatsAppRoutes(d)
 }
 
 // registerAdminSecurityRoutes wires the admin dashboard's Security tab:
@@ -136,4 +137,11 @@ func registerAdminCouponRoutes(d *routeDeps) {
 	coupons.Put("/:id", d.coupon.UpdateCoupon)
 	coupons.Delete("/:id", d.coupon.DeleteCoupon)
 	coupons.Patch("/:id/toggle", d.coupon.ToggleCoupon)
+}
+
+func registerAdminWhatsAppRoutes(d *routeDeps) {
+	wa := d.admin.Group("/whatsapp")
+	wa.Get("/settings", d.whatsappSettings.GetSettings)
+	wa.Put("/settings", d.whatsappSettings.UpdateSettings)
+	wa.Post("/test", d.whatsappSettings.SendTest)
 }

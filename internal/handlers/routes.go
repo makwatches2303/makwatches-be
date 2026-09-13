@@ -68,6 +68,7 @@ type routeDeps struct {
 	cartTracker *CartTrackerHandler
 	analytics   *AnalyticsHandler
 	coupon      *CouponHandler
+	whatsappSettings *WhatsAppSettingsHandler
 }
 
 // SetupRoutes configures all application routes.
@@ -137,6 +138,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 	wa := whatsapp.NewClient(cfg)
 	d.subscriber = NewSubscriberHandler(db, cfg, wa)
 	d.cartTracker = NewCartTrackerHandler(db, cfg, wa)
+	d.whatsappSettings = NewWhatsAppSettingsHandler(db, cfg, wa)
 
 	// Start background worker for abandoned cart recovery
 	d.cartTracker.StartAbandonedCartWorker(context.Background(), 10*time.Minute)
