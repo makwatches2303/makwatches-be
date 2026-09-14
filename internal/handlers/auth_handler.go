@@ -741,7 +741,11 @@ func (h *AuthHandler) generateToken(userID, role string) (string, error) {
 	claims := token.Claims.(jwt.MapClaims)
 	claims["userId"] = userID
 	claims["role"] = role
-	claims["exp"] = time.Now().Add(time.Duration(h.Config.JWTExpirationHours) * time.Hour).Unix()
+	expHours := h.Config.JWTExpirationHours
+	if role == "admin" && expHours < 168 {
+		expHours = 168 // 7 days for admin
+	}
+	claims["exp"] = time.Now().Add(time.Duration(expHours) * time.Hour).Unix()
 
 	// Generate encoded token
 	tokenString, err := token.SignedString([]byte(h.Config.JWTSecret))
