@@ -108,6 +108,48 @@ jobs:
                   for k in keys:
                       val = os.environ.get(k, defaults.get(k, ""))
                       f.write(f"{k}={val}\n")
+
+          # Individual secrets are layered over ENV_FILE rather than ignored
+          # when it is present.
+          #
+          # ENV_FILE is a whole-file blob and GitHub secrets are write-only,
+          # so adding one variable used to mean rewriting the entire blob
+          # blind. The trap was worse than the chore: setting, say,
+          # SHIPROCKET_EMAIL as its own secret looked like it worked and did
+          # nothing, because the ENV_FILE branch never read it. Shiprocket
+          # shipped with no credentials for exactly this reason -- and a
+          # manual `aws lambda update-function-configuration` to patch it was
+          # silently reverted by the next deploy.
+          #
+          # ENV_FILE stays the base. Only non-empty individual secrets
+          # override, so this cannot blank a value that ENV_FILE supplies.
+          overrides = {k: v for k, v in (
+              (key, os.environ.get(key, "").strip()) for key in [
+                  "SHIPROCKET_EMAIL", "SHIPROCKET_PASSWORD",
+                  "SHIPROCKET_PICKUP_LOCATION", "SHIPROCKET_WEBHOOK_SECRET",
+                  "DELHIVERY_API_TOKEN", "DELHIVERY_PICKUP_LOCATION",
+              ]
+          ) if v}
+
+          if overrides:
+              lines = []
+              seen = set()
+              with open(".env") as f:
+                  for line in f.read().splitlines():
+                      key = line.split("=", 1)[0].strip() if "=" in line else ""
+                      if key in overrides:
+                          lines.append(f"{key}={overrides[key]}")
+                          seen.add(key)
+                      else:
+                          lines.append(line)
+              for key, val in overrides.items():
+                  if key not in seen:
+                      lines.append(f"{key}={val}")
+              with open(".env", "w") as f:
+                  f.write("\n".join(lines) + "\n")
+              print(f"==> Applied {len(overrides)} individual secret override(s): "
+                    f"{', '.join(sorted(overrides))}")
+
           print("==> .env file generated successfully")
           PY
 
