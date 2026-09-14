@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - lambda-migration-prep
       - admin-features
   workflow_dispatch:
 
@@ -32,7 +31,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION || 'ap-south-1' }}
+          aws-region: ap-south-1
 
       - name: Prepare Environment File
         env:
@@ -72,51 +71,45 @@ jobs:
           SHIPROCKET_PICKUP_LOCATION: ${{ secrets.SHIPROCKET_PICKUP_LOCATION }}
           SHIPROCKET_WEBHOOK_SECRET: ${{ secrets.SHIPROCKET_WEBHOOK_SECRET }}
         run: |
-          if [ -n "$ENV_FILE_SECRET" ]; then
-            echo "==> Using full ENV_FILE from GitHub Secrets"
-            printf '%s\n' "$ENV_FILE_SECRET" > .env
-          else
-            echo "==> Constructing .env from individual GitHub Secrets"
-            cat << 'INNER_EOF' > .env
-          ENVIRONMENT=production
-          PORT=8080
-          FRONTEND_URL=${FRONTEND_URL}
-          ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
-          MONGO_URI=${MONGO_URI}
-          JWT_SECRET=${JWT_SECRET}
-          RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
-          RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
-          RAZORPAY_MODE=${RAZORPAY_MODE}
-          FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
-          FIREBASE_BUCKET_NAME=${FIREBASE_BUCKET_NAME}
-          FIREBASE_CREDENTIALS_JSON=${FIREBASE_CREDENTIALS_JSON}
-          DELHIVERY_API_TOKEN=${DELHIVERY_API_TOKEN}
-          DELHIVERY_BASE_URL=${DELHIVERY_BASE_URL}
-          DELHIVERY_PICKUP_LOCATION=${DELHIVERY_PICKUP_LOCATION}
-          DELHIVERY_SELLER_NAME=${DELHIVERY_SELLER_NAME}
-          DELHIVERY_SELLER_PHONE=${DELHIVERY_SELLER_PHONE}
-          DELHIVERY_SELLER_ADDRESS=${DELHIVERY_SELLER_ADDRESS}
-          DELHIVERY_SELLER_CITY=${DELHIVERY_SELLER_CITY}
-          DELHIVERY_SELLER_STATE=${DELHIVERY_SELLER_STATE}
-          DELHIVERY_SELLER_PINCODE=${DELHIVERY_SELLER_PINCODE}
-          DELHIVERY_RETURN_ADDRESS=${DELHIVERY_RETURN_ADDRESS}
-          DELHIVERY_RETURN_CITY=${DELHIVERY_RETURN_CITY}
-          DELHIVERY_RETURN_STATE=${DELHIVERY_RETURN_STATE}
-          DELHIVERY_RETURN_PINCODE=${DELHIVERY_RETURN_PINCODE}
-          DELHIVERY_RETURN_PHONE=${DELHIVERY_RETURN_PHONE}
-          FLOWSELL_API_KEY=${FLOWSELL_API_KEY}
-          FLOWSELL_API_BASE_URL=${FLOWSELL_API_BASE_URL}
-          WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
-          WHATSAPP_WELCOME_TEMPLATE=${WHATSAPP_WELCOME_TEMPLATE}
-          WHATSAPP_CART_TEMPLATE=${WHATSAPP_CART_TEMPLATE}
-          WHATSAPP_WELCOME_IMAGE_URL=${WHATSAPP_WELCOME_IMAGE_URL}
-          SHIPROCKET_EMAIL=${SHIPROCKET_EMAIL}
-          SHIPROCKET_PASSWORD=${SHIPROCKET_PASSWORD}
-          SHIPROCKET_PICKUP_LOCATION=${SHIPROCKET_PICKUP_LOCATION}
-          SHIPROCKET_WEBHOOK_SECRET=${SHIPROCKET_WEBHOOK_SECRET}
-INNER_EOF
-            envsubst < .env > .env.tmp && mv .env.tmp .env
-          fi
+          python3 - << 'PY'
+          import os
+
+          env_file_secret = os.environ.get("ENV_FILE_SECRET", "").strip()
+          if env_file_secret:
+              print("==> Using full ENV_FILE from GitHub Secrets")
+              with open(".env", "w") as f:
+                  f.write(env_file_secret + "\n")
+          else:
+              print("==> Constructing .env from individual GitHub Secrets")
+              keys = [
+                  "ENVIRONMENT", "PORT", "FRONTEND_URL", "ALLOWED_ORIGINS",
+                  "MONGO_URI", "JWT_SECRET",
+                  "RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_MODE",
+                  "FIREBASE_PROJECT_ID", "FIREBASE_BUCKET_NAME", "FIREBASE_CREDENTIALS_JSON",
+                  "DELHIVERY_API_TOKEN", "DELHIVERY_BASE_URL", "DELHIVERY_PICKUP_LOCATION",
+                  "DELHIVERY_SELLER_NAME", "DELHIVERY_SELLER_PHONE", "DELHIVERY_SELLER_ADDRESS",
+                  "DELHIVERY_SELLER_CITY", "DELHIVERY_SELLER_STATE", "DELHIVERY_SELLER_PINCODE",
+                  "DELHIVERY_RETURN_ADDRESS", "DELHIVERY_RETURN_CITY", "DELHIVERY_RETURN_STATE",
+                  "DELHIVERY_RETURN_PINCODE", "DELHIVERY_RETURN_PHONE",
+                  "FLOWSELL_API_KEY", "FLOWSELL_API_BASE_URL",
+                  "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_WELCOME_TEMPLATE",
+                  "WHATSAPP_CART_TEMPLATE", "WHATSAPP_WELCOME_IMAGE_URL",
+                  "SHIPROCKET_EMAIL", "SHIPROCKET_PASSWORD",
+                  "SHIPROCKET_PICKUP_LOCATION", "SHIPROCKET_WEBHOOK_SECRET"
+              ]
+              defaults = {
+                  "ENVIRONMENT": "production",
+                  "PORT": "8080",
+                  "FRONTEND_URL": "https://makwatches.in",
+                  "ALLOWED_ORIGINS": "https://makwatches.in,https://admin.makwatches.in",
+                  "RAZORPAY_MODE": "live"
+              }
+              with open(".env", "w") as f:
+                  for k in keys:
+                      val = os.environ.get(k, defaults.get(k, ""))
+                      f.write(f"{k}={val}\n")
+          print("==> .env file generated successfully")
+          PY
 
       - name: Build Lambda Packages
         run: |
@@ -130,46 +123,59 @@ INNER_EOF
       - name: Prune ECR Images (Keep Top 4 to Minimize Storage Cost)
         continue-on-error: true
         run: |
-          AWS_REGION="${AWS_REGION:-ap-south-1}"
-          REPO_NAME="makwatches-be"
-          
-          if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "==> Setting lifecycle policy to keep only latest 4 images on ECR repo $REPO_NAME"
-            cat << 'POLICY_EOF' > /tmp/ecr-lifecycle.json
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep only latest 4 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 4
-                },
-                "action": {
-                  "type": "expire"
-                }
-              }
-            ]
-          }
-POLICY_EOF
-            aws ecr put-lifecycle-policy \
-              --repository-name "$REPO_NAME" \
-              --lifecycle-policy-text "file:///tmp/ecr-lifecycle.json" \
-              --region "$AWS_REGION" || true
+          python3 - << 'PY'
+          import json, subprocess, sys
 
-            IMAGES_TO_DELETE=$(aws ecr describe-images --repository-name "$REPO_NAME" --region "$AWS_REGION" \
-              --query 'sort_by(imageDetails,&imagePushedAt)[::-1][4:].imageDigest' --output text)
-            
-            if [ -n "$IMAGES_TO_DELETE" ] && [ "$IMAGES_TO_DELETE" != "None" ]; then
-              echo "==> Deleting old ECR images beyond top 4 to save costs..."
-              for digest in $IMAGES_TO_DELETE; do
-                aws ecr batch-delete-image --repository-name "$REPO_NAME" --region "$AWS_REGION" \
-                  --image-ids imageDigest="$digest" || true
-              done
-            else
-              echo "==> ECR images within quota (<= 4 images). No extra images to delete."
-            fi
-          else
-            echo "==> No ECR repository '$REPO_NAME' found (Lambda uses direct Graviton ARM64 zip packaging with 0 ECR cost)."
-          fi
+          region = "ap-south-1"
+          repo_name = "makwatches-be"
+
+          check = subprocess.run(
+              ["aws", "ecr", "describe-repositories", "--repository-names", repo_name, "--region", region],
+              capture_output=True, text=True
+          )
+          if check.returncode != 0:
+              print(f"==> No ECR repository '{repo_name}' found (Lambda uses direct Graviton ARM64 zip packaging with 0 ECR cost).")
+              sys.exit(0)
+
+          print(f"==> Setting lifecycle policy on ECR repo {repo_name} to keep only top 4 images")
+          policy = {
+              "rules": [{
+                  "rulePriority": 1,
+                  "description": "Keep only latest 4 images",
+                  "selection": {
+                      "tagStatus": "any",
+                      "countType": "imageCountMoreThan",
+                      "countNumber": 4
+                  },
+                  "action": {"type": "expire"}
+              }]
+          }
+          subprocess.run([
+              "aws", "ecr", "put-lifecycle-policy",
+              "--repository-name", repo_name,
+              "--lifecycle-policy-text", json.dumps(policy),
+              "--region", region
+          ], check=False)
+
+          out = subprocess.run([
+              "aws", "ecr", "describe-images",
+              "--repository-name", repo_name,
+              "--region", region,
+              "--query", "sort_by(imageDetails,&imagePushedAt)[::-1][4:].imageDigest",
+              "--output", "text"
+          ], capture_output=True, text=True)
+
+          digests = out.stdout.strip().split()
+          digests = [d for d in digests if d and d != "None"]
+          if digests:
+              print(f"==> Deleting {len(digests)} old ECR images beyond top 4...")
+              for d in digests:
+                  subprocess.run([
+                      "aws", "ecr", "batch-delete-image",
+                      "--repository-name", repo_name,
+                      "--region", region,
+                      "--image-ids", f"imageDigest={d}"
+                  ], check=False)
+          else:
+              print("==> ECR images within limit (<= 4 images).")
+          PY
