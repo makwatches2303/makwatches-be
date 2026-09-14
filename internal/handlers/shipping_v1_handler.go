@@ -50,6 +50,31 @@ func shippingError(c *fiber.Ctx, err error, context string) error {
 	})
 }
 
+// adminShippingError is shippingError for routes behind the admin role.
+//
+// Same log line, but the operator detail also goes in the response. The
+// caller here is the shop's own staff on /admin/*, not a customer: when a
+// booking fails, "We could not book the shipment for this order." tells them
+// nothing they can act on, and the reason ("no shiprocket pickup location is
+// configured", a carrier's rejection text) was reachable only by reading
+// CloudWatch. The privacy reasoning on shippingError above is about not
+// echoing a customer's address or phone to a *customer-facing* response;
+// admin staff already see the full order.
+func adminShippingError(c *fiber.Ctx, err error, context string) error {
+	se := shipping.AsError(err)
+	log.Printf("[SHIPPING-API] %s failed: code=%s detail=%s", context, se.Code, se.Detail)
+	code, message := se.Public()
+	body := fiber.Map{
+		"success": false,
+		"code":    string(code),
+		"message": message,
+	}
+	if se.Detail != "" {
+		body["detail"] = se.Detail
+	}
+	return c.Status(se.HTTPStatus()).JSON(body)
+}
+
 // ---------------------------------------------------------------- rates
 
 // rateRequestBody is the checkout-facing serviceability request.

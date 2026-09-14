@@ -356,7 +356,7 @@ func (h *ShippingHandler) RetryShipment(c *fiber.Ctx) error {
 		AssignAWB: true,
 	})
 	if err != nil {
-		return shippingError(c, err, "retry shipment for order "+order.ID.Hex())
+		return adminShippingError(c, err, "retry shipment for order "+order.ID.Hex())
 	}
 	h.invalidateOrderCache(c, order)
 
@@ -384,7 +384,7 @@ func (h *ShippingHandler) CancelShipment(c *fiber.Ctx) error {
 		return authError(c, err)
 	}
 	if err := h.Service.Cancel(c.UserContext(), order); err != nil {
-		return shippingError(c, err, "cancel shipment for order "+order.ID.Hex())
+		return adminShippingError(c, err, "cancel shipment for order "+order.ID.Hex())
 	}
 	h.invalidateOrderCache(c, order)
 	return c.JSON(fiber.Map{
@@ -408,7 +408,7 @@ func (h *ShippingHandler) GetShippingLabel(c *fiber.Ctx) error {
 
 	label, err := h.Service.Label(c.UserContext(), order)
 	if err != nil {
-		return shippingError(c, err, "label for order "+order.ID.Hex())
+		return adminShippingError(c, err, "label for order "+order.ID.Hex())
 	}
 
 	filename := label.Filename
@@ -513,7 +513,7 @@ func (h *ShippingHandler) RequestPickup(c *fiber.Ctx) error {
 
 	pickup, err := h.Service.SchedulePickup(ctx, &order)
 	if err != nil {
-		return shippingError(c, err, "pickup for order "+order.ID.Hex())
+		return adminShippingError(c, err, "pickup for order "+order.ID.Hex())
 	}
 	message := "Pickup requested successfully"
 	if pickup.AlreadyScheduled {

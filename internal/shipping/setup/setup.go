@@ -99,6 +99,12 @@ func Build(db *mongo.Database, cfg *config.Config, delhiverySvc *services.Delhiv
 			Defaults:    true,
 		},
 		SellerGSTIN: cfg.SellerGSTIN,
+		// Placeholder rates for an unconfigured carrier are a local
+		// convenience only. In production they promise the shopper a courier
+		// and a delivery date nobody quoted, and the resulting order cannot
+		// be booked -- so outside development the provider is simply skipped
+		// and checkout offers whatever carriers really are configured.
+		AllowDevFallbackRates: cfg.Environment != "production",
 	}
 
 	svc := shipping.NewService(db, svcCfg, shipping.NewQuoter(cfg.JWTSecret),

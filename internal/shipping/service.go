@@ -31,6 +31,12 @@ type ServiceConfig struct {
 	Package PackageSpec
 	// SellerGSTIN is forwarded to carriers when configured.
 	SellerGSTIN string
+	// AllowDevFallbackRates permits placeholder rate options to stand in for a
+	// provider that has no credentials, so checkout still renders in dev and
+	// staging. It must stay false in production: those options name a courier
+	// and a delivery date the carrier never quoted, and an order placed
+	// against one cannot be booked -- see devFallbackOptions.
+	AllowDevFallbackRates bool
 }
 
 // Service is the single entry point for every shipping operation.
@@ -268,7 +274,19 @@ func (s *Service) Serviceability(ctx context.Context, providerName string, req R
 			}
 			// When a provider has no credentials, inject dev fallback options
 			// without calling the carrier so checkout still works in dev/staging.
+			//
+			// Never in production. These options are invented -- courier name,
+			// price and ETA all -- and one of them is even marked Recommended,
+			// so a shopper is steered onto a carrier that was never asked for a
+			// quote. The order places fine and then cannot be booked at all,
+			// surfacing as SHIPMENT_CREATION_FAILED on the admin's retry with
+			// nothing in the order to explain why. Skipping the provider
+			// instead means checkout offers only carriers that can actually
+			// take the parcel.
 			if cp, canCheck := p.(ConfigurableProvider); canCheck && !cp.Configured() {
+				if !s.cfg.AllowDevFallbackRates {
+					continue
+				}
 				fallback := devFallbackOptions(pName, s.now)
 				if len(fallback) > 0 {
 					if req.PickupPincode == "" {
