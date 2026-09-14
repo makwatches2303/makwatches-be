@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -30,6 +33,106 @@ func NewSubscriberHandler(db *database.DBClient, cfg *config.Config, wa *whatsap
 		Config:   cfg,
 		WhatsApp: wa,
 	}
+}
+
+// SubscribeEmail records an email address from the newsletter block.
+//
+// Deliberately separate from SubscribeWhatsApp, and deliberately silent: it
+// stores the address and returns. No WhatsApp template is dispatched, because
+// the visitor gave an email and never consented to a message on their phone --
+// and in the ordinary case there is no phone number on the record to send one
+// to.
+//
+// The upsert is keyed on the normalized email, so a visitor who has already
+// subscribed by phone keeps that number, and re-submitting the same address is
+// idempotent rather than creating duplicates.
+//
+// The response is intentionally identical whether or not the address was
+// already on the list. Reporting "you are already subscribed" turns a public,
+// unauthenticated endpoint into an oracle that confirms whether a given address
+// is a customer.
+func (h *SubscriberHandler) SubscribeEmail(c *fiber.Ctx) error {
+	var req models.SubscribeEmailRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Invalid request body",
+		})
+	}
+
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Please enter a valid email address.",
+		})
+	}
+
+	source := req.Source
+	if source == "" {
+		source = "newsletter"
+	}
+
+	now := time.Now()
+	update := bson.M{
+		"$set": bson.M{
+			"email":      email,
+			"source":     source,
+			"updated_at": now,
+		},
+		"$setOnInsert": bson.M{
+			"created_at":   now,
+			"welcome_sent": false,
+		},
+	}
+	// Name only when one was given: an empty value would wipe a name captured
+	// earlier through the phone popup.
+	if strings.TrimSpace(req.Name) != "" {
+		update["$set"].(bson.M)["name"] = strings.TrimSpace(req.Name)
+	}
+
+	_, err = h.DB.Collections().Subscribers.UpdateOne(
+		c.Context(),
+		bson.M{"email": email},
+		update,
+		options.Update().SetUpsert(true),
+	)
+	if err != nil {
+		// The address is not logged: it is personal data, and a failure here is
+		// actionable without it.
+		log.Printf("[SUBSCRIBER] Error saving email subscriber: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Could not save your subscription. Please try again.",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": "You are on the list.",
+	})
+}
+
+// normalizeEmail validates an address and lowercases it for use as a key.
+//
+// mail.ParseAddress also accepts display-name forms ("A <a@b.c>"), which must
+// not become a subscriber key, so the parsed address is required to match the
+// trimmed input.
+func normalizeEmail(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("email is required")
+	}
+
+	parsed, err := mail.ParseAddress(trimmed)
+	if err != nil || !strings.EqualFold(parsed.Address, trimmed) {
+		return "", fmt.Errorf("invalid email address")
+	}
+	if !strings.Contains(parsed.Address, ".") {
+		return "", fmt.Errorf("invalid email address")
+	}
+
+	return strings.ToLower(parsed.Address), nil
 }
 
 // SubscribeWhatsApp handles user subscribing their phone number from the website popup

@@ -488,7 +488,11 @@ func DefaultStorefrontContent() StorefrontContent {
 				},
 			},
 		},
-		House: HouseContent{Enabled: false, Eyebrow: "The MAK house"},
+		// "About MAK Watches", not "The MAK house". MAK is a retailer; a "house"
+		// is what a maison calls itself, and the word reads as a claim to make
+		// the watches. Only the shipped default changes here -- a stored value
+		// an admin has written still wins on read.
+		House: HouseContent{Enabled: false, Eyebrow: "About MAK Watches"},
 		Poster: PosterContent{
 			Enabled:       true,
 			HeadlineLines: []string{"Join the", "list."},

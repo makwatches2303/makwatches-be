@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
@@ -36,6 +38,10 @@ func registerV1Routes(d *routeDeps) {
 	// Marketing & WhatsApp Lead Capture
 	v1.Post("/subscribers/whatsapp", d.subscriber.SubscribeWhatsApp)
 	v1.Post("/subscribers", d.subscriber.SubscribeWhatsApp)
+	// Email capture for the homepage newsletter block. Rate limited like the
+	// other public write endpoints: it is unauthenticated, so without a limit it
+	// is a free way to stuff the subscriber list.
+	v1.Post("/subscribers/email", rateLimit(5, time.Minute), d.subscriber.SubscribeEmail)
 
 	// Cart activity tracking & abandoned recovery
 	v1.Post("/cart/track", d.cartTracker.TrackCart)
