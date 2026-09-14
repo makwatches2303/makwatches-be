@@ -2,6 +2,7 @@ package shipping
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -289,6 +290,18 @@ type Provider interface {
 	// ParseWebhook authenticates and normalizes a callback. It must reject an
 	// unauthenticated or malformed payload before any state is read or written.
 	ParseWebhook(headers map[string]string, body []byte) (*WebhookEvent, error)
+}
+
+// StatusRank exposes how far along a fulfillment state is, for callers that
+// need to gate on "has the parcel physically moved yet" -- correcting a
+// delivery address, for one, which stops being meaningful the moment a
+// courier has the box in hand. An unknown status ranks -1 rather than 0, so
+// it is never mistaken for "not started yet".
+func StatusRank(status string) int {
+	if r, ok := statusRank[strings.ToLower(strings.TrimSpace(status))]; ok {
+		return r
+	}
+	return -1
 }
 
 // statusRank orders fulfillment states so a late or replayed carrier callback

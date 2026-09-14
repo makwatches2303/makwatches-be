@@ -143,8 +143,16 @@ type Order struct {
 	CustomerPhone   string             `json:"customerPhone,omitempty" bson:"customer_phone,omitempty"` // Customer contact for delivery
 	CustomerEmail   string             `json:"customerEmail,omitempty" bson:"customer_email,omitempty"` // Customer email
 	CustomerName    string             `json:"customerName,omitempty" bson:"customer_name,omitempty"`   // Customer name for delivery
-	CreatedAt       time.Time          `json:"createdAt" bson:"created_at"`
-	UpdatedAt       time.Time          `json:"updatedAt" bson:"updated_at"`
+
+	// Set when a delivery address is corrected after the order was placed
+	// (PATCH /orders/:id/address). Kept so support can tell an address the
+	// customer entered from one a staff member took over the phone, which
+	// matters when a parcel goes to the wrong place.
+	AddressUpdatedAt time.Time `json:"addressUpdatedAt,omitempty" bson:"address_updated_at,omitempty"`
+	AddressUpdatedBy string    `json:"addressUpdatedBy,omitempty" bson:"address_updated_by,omitempty"`
+
+	CreatedAt time.Time `json:"createdAt" bson:"created_at"`
+	UpdatedAt time.Time `json:"updatedAt" bson:"updated_at"`
 }
 
 // CheckoutRequest represents the data required for placing an order

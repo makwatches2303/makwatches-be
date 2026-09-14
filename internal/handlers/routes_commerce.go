@@ -43,6 +43,11 @@ func registerOrderRoutes(d *routeDeps) {
 	orders.Get("/user/:userID", d.order.GetOrders)
 	orders.Get("/:orderID", d.order.GetOrder)
 	orders.Post("/:orderID/cancel", d.order.CancelOrder)
+	// Correcting a delivery address. Not admin-gated: the person who typed
+	// the wrong pincode is usually the one who can fix it fastest, and the
+	// handler authorizes owner-or-admin itself and re-checks serviceability
+	// before saving anything.
+	orders.Patch("/:orderID/address", d.shippingV1.UpdateOrderAddress)
 
 	// Admin-only order operations.
 	orders.Get("/", middleware.Role("admin"), d.order.GetAllOrders)
