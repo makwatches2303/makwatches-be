@@ -17,7 +17,6 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/shipping"
 )
 
-
 // ShippingHandler serves the original flat shipping routes.
 //
 // Every route it exposed before is still mounted on the same path with the
@@ -341,7 +340,6 @@ func tierChargeFor(days int, cfg models.ShippingTierConfig) float64 {
 	return cfg.SurfaceCharge
 }
 
-
 // RetryShipment books a shipment for an order that has none.
 //
 // POST /admin/shipping/orders/:orderID/retry. Idempotent through
@@ -366,8 +364,30 @@ func (h *ShippingHandler) RetryShipment(c *fiber.Ctx) error {
 			"message": "A shipment for this order is already being created",
 		})
 	}
+	// "Created" and "ready to ship" are different states, and saying the first
+	// when only the second matters is what made a half-booked order look
+	// finished: the carrier had the order but no tracking number, and the
+	// response still read "Shipment created successfully" with an empty
+	// waybill beside an AWB_ASSIGNMENT_FAILED on the record. Report what
+	// actually happened so the next action is obvious.
+	if shipment.TrackingNumber == "" {
+		message := "Shipment booked with the carrier, but no tracking number was assigned yet."
+		if shipment.StatusReason != "" {
+			message += " " + shipment.StatusReason + "."
+		}
+		return c.JSON(fiber.Map{
+			"success":     true,
+			"awbAssigned": false,
+			"message":     message,
+			"waybill":     "",
+			"trackingUrl": "",
+			"data":        shipment,
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"success":     true,
+		"awbAssigned": true,
 		"message":     "Shipment created successfully",
 		"waybill":     shipment.TrackingNumber,
 		"trackingUrl": shipment.TrackingURL,

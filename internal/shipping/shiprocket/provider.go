@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -414,12 +415,31 @@ func (p *Provider) AssignAWB(ctx context.Context, req shipping.AssignAWBRequest)
 			"cannot assign an AWB without a shiprocket shipment id")
 	}
 
+	// Shiprocket identifies a courier by numeric id. Anything else reaches it
+	// as a bare `400 Bad Request` with no explanation -- which is how an
+	// order carrying a placeholder selection like "delhivery_surface" (see
+	// devFallbackOptions, which used to run in production) became
+	// permanently unshippable: every retry re-sent the same invalid id.
+	//
+	// `courier_id` is optional. Dropping a value Shiprocket cannot parse and
+	// letting it assign its own recommended courier for the lane ships the
+	// parcel, which is the point; refusing to ship because a stored
+	// preference is stale is not.
+	courierID := strings.TrimSpace(req.CourierID)
+	if courierID != "" {
+		if _, err := strconv.Atoi(courierID); err != nil {
+			log.Printf("[SHIPROCKET] shipment=%s ignoring non-numeric courier id %q; letting shiprocket choose",
+				shipmentID, courierID)
+			courierID = ""
+		}
+	}
+
 	resp, err := p.call(ctx, request{
 		method: http.MethodPost,
 		path:   "/courier/assign/awb",
 		body: assignAWBRequest{
 			ShipmentID: shipmentID,
-			CourierID:  strings.TrimSpace(req.CourierID),
+			CourierID:  courierID,
 		},
 		replayable: false,
 	})

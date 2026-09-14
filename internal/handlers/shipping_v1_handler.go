@@ -228,7 +228,7 @@ func (h *ShippingV1Handler) CreateShipment(c *fiber.Ctx) error {
 
 	shipment, err := h.Service.CreateShipmentForOrder(c.UserContext(), order, opts)
 	if err != nil {
-		return shippingError(c, err, "create shipment for order "+order.ID.Hex())
+		return adminShippingError(c, err, "create shipment for order "+order.ID.Hex())
 	}
 	h.invalidateOrderCache(c, order)
 	return c.JSON(fiber.Map{"success": true, "data": shipment})
@@ -327,7 +327,7 @@ func (h *ShippingV1Handler) AssignAWB(c *fiber.Ctx) error {
 
 	shipment, err := h.Service.AssignAWBForOrder(c.UserContext(), order, strings.TrimSpace(body.CourierID))
 	if err != nil {
-		return shippingError(c, err, "assign awb for order "+order.ID.Hex())
+		return adminShippingError(c, err, "assign awb for order "+order.ID.Hex())
 	}
 	h.invalidateOrderCache(c, order)
 	return c.JSON(fiber.Map{"success": true, "data": shipment})
@@ -379,7 +379,7 @@ func (h *ShippingV1Handler) CancelShipment(c *fiber.Ctx) error {
 		return authError(c, err)
 	}
 	if err := h.Service.Cancel(c.UserContext(), order); err != nil {
-		return shippingError(c, err, "cancel shipment for order "+order.ID.Hex())
+		return adminShippingError(c, err, "cancel shipment for order "+order.ID.Hex())
 	}
 	h.invalidateOrderCache(c, order)
 	return c.JSON(fiber.Map{"success": true, "message": "Shipment cancelled"})
@@ -427,7 +427,7 @@ func (h *ShippingV1Handler) SchedulePickup(c *fiber.Ctx) error {
 	}
 	pickup, err := h.Service.SchedulePickup(c.UserContext(), order)
 	if err != nil {
-		return shippingError(c, err, "pickup for order "+order.ID.Hex())
+		return adminShippingError(c, err, "pickup for order "+order.ID.Hex())
 	}
 	message := "Pickup scheduled"
 	if pickup.AlreadyScheduled {
@@ -444,7 +444,7 @@ func (h *ShippingV1Handler) PickupLocations(c *fiber.Ctx) error {
 	provider := strings.TrimSpace(c.Query("provider"))
 	locations, err := h.Service.PickupLocations(c.UserContext(), provider)
 	if err != nil {
-		return shippingError(c, err, "pickup locations")
+		return adminShippingError(c, err, "pickup locations")
 	}
 	configured, valid, valErr := h.Service.ValidatePickupLocation(c.UserContext(), provider)
 	if valErr != nil {
