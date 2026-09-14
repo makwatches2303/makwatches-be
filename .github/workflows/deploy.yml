@@ -1,0 +1,175 @@
+name: Deploy MakWatches Backend to AWS Lambda
+
+on:
+  push:
+    branches:
+      - main
+      - lambda-migration-prep
+      - admin-features
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-makwatches-be
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build & Deploy to AWS Lambda
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'ap-south-1' }}
+
+      - name: Prepare Environment File
+        env:
+          ENV_FILE_SECRET: ${{ secrets.ENV_FILE }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL || 'https://makwatches.in' }}
+          ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS || 'https://makwatches.in,https://admin.makwatches.in' }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_MODE: ${{ secrets.RAZORPAY_MODE || 'live' }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_BUCKET_NAME: ${{ secrets.FIREBASE_BUCKET_NAME }}
+          FIREBASE_CREDENTIALS_JSON: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
+          DELHIVERY_API_TOKEN: ${{ secrets.DELHIVERY_API_TOKEN }}
+          DELHIVERY_BASE_URL: ${{ secrets.DELHIVERY_BASE_URL }}
+          DELHIVERY_PICKUP_LOCATION: ${{ secrets.DELHIVERY_PICKUP_LOCATION }}
+          DELHIVERY_SELLER_NAME: ${{ secrets.DELHIVERY_SELLER_NAME }}
+          DELHIVERY_SELLER_PHONE: ${{ secrets.DELHIVERY_SELLER_PHONE }}
+          DELHIVERY_SELLER_ADDRESS: ${{ secrets.DELHIVERY_SELLER_ADDRESS }}
+          DELHIVERY_SELLER_CITY: ${{ secrets.DELHIVERY_SELLER_CITY }}
+          DELHIVERY_SELLER_STATE: ${{ secrets.DELHIVERY_SELLER_STATE }}
+          DELHIVERY_SELLER_PINCODE: ${{ secrets.DELHIVERY_SELLER_PINCODE }}
+          DELHIVERY_RETURN_ADDRESS: ${{ secrets.DELHIVERY_RETURN_ADDRESS }}
+          DELHIVERY_RETURN_CITY: ${{ secrets.DELHIVERY_RETURN_CITY }}
+          DELHIVERY_RETURN_STATE: ${{ secrets.DELHIVERY_RETURN_STATE }}
+          DELHIVERY_RETURN_PINCODE: ${{ secrets.DELHIVERY_RETURN_PINCODE }}
+          DELHIVERY_RETURN_PHONE: ${{ secrets.DELHIVERY_RETURN_PHONE }}
+          FLOWSELL_API_KEY: ${{ secrets.FLOWSELL_API_KEY }}
+          FLOWSELL_API_BASE_URL: ${{ secrets.FLOWSELL_API_BASE_URL }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_WELCOME_TEMPLATE: ${{ secrets.WHATSAPP_WELCOME_TEMPLATE }}
+          WHATSAPP_CART_TEMPLATE: ${{ secrets.WHATSAPP_CART_TEMPLATE }}
+          WHATSAPP_WELCOME_IMAGE_URL: ${{ secrets.WHATSAPP_WELCOME_IMAGE_URL }}
+          SHIPROCKET_EMAIL: ${{ secrets.SHIPROCKET_EMAIL }}
+          SHIPROCKET_PASSWORD: ${{ secrets.SHIPROCKET_PASSWORD }}
+          SHIPROCKET_PICKUP_LOCATION: ${{ secrets.SHIPROCKET_PICKUP_LOCATION }}
+          SHIPROCKET_WEBHOOK_SECRET: ${{ secrets.SHIPROCKET_WEBHOOK_SECRET }}
+        run: |
+          if [ -n "$ENV_FILE_SECRET" ]; then
+            echo "==> Using full ENV_FILE from GitHub Secrets"
+            printf '%s\n' "$ENV_FILE_SECRET" > .env
+          else
+            echo "==> Constructing .env from individual GitHub Secrets"
+            cat << 'INNER_EOF' > .env
+          ENVIRONMENT=production
+          PORT=8080
+          FRONTEND_URL=${FRONTEND_URL}
+          ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+          MONGO_URI=${MONGO_URI}
+          JWT_SECRET=${JWT_SECRET}
+          RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+          RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+          RAZORPAY_MODE=${RAZORPAY_MODE}
+          FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
+          FIREBASE_BUCKET_NAME=${FIREBASE_BUCKET_NAME}
+          FIREBASE_CREDENTIALS_JSON=${FIREBASE_CREDENTIALS_JSON}
+          DELHIVERY_API_TOKEN=${DELHIVERY_API_TOKEN}
+          DELHIVERY_BASE_URL=${DELHIVERY_BASE_URL}
+          DELHIVERY_PICKUP_LOCATION=${DELHIVERY_PICKUP_LOCATION}
+          DELHIVERY_SELLER_NAME=${DELHIVERY_SELLER_NAME}
+          DELHIVERY_SELLER_PHONE=${DELHIVERY_SELLER_PHONE}
+          DELHIVERY_SELLER_ADDRESS=${DELHIVERY_SELLER_ADDRESS}
+          DELHIVERY_SELLER_CITY=${DELHIVERY_SELLER_CITY}
+          DELHIVERY_SELLER_STATE=${DELHIVERY_SELLER_STATE}
+          DELHIVERY_SELLER_PINCODE=${DELHIVERY_SELLER_PINCODE}
+          DELHIVERY_RETURN_ADDRESS=${DELHIVERY_RETURN_ADDRESS}
+          DELHIVERY_RETURN_CITY=${DELHIVERY_RETURN_CITY}
+          DELHIVERY_RETURN_STATE=${DELHIVERY_RETURN_STATE}
+          DELHIVERY_RETURN_PINCODE=${DELHIVERY_RETURN_PINCODE}
+          DELHIVERY_RETURN_PHONE=${DELHIVERY_RETURN_PHONE}
+          FLOWSELL_API_KEY=${FLOWSELL_API_KEY}
+          FLOWSELL_API_BASE_URL=${FLOWSELL_API_BASE_URL}
+          WHATSAPP_PHONE_NUMBER_ID=${WHATSAPP_PHONE_NUMBER_ID}
+          WHATSAPP_WELCOME_TEMPLATE=${WHATSAPP_WELCOME_TEMPLATE}
+          WHATSAPP_CART_TEMPLATE=${WHATSAPP_CART_TEMPLATE}
+          WHATSAPP_WELCOME_IMAGE_URL=${WHATSAPP_WELCOME_IMAGE_URL}
+          SHIPROCKET_EMAIL=${SHIPROCKET_EMAIL}
+          SHIPROCKET_PASSWORD=${SHIPROCKET_PASSWORD}
+          SHIPROCKET_PICKUP_LOCATION=${SHIPROCKET_PICKUP_LOCATION}
+          SHIPROCKET_WEBHOOK_SECRET=${SHIPROCKET_WEBHOOK_SECRET}
+INNER_EOF
+            envsubst < .env > .env.tmp && mv .env.tmp .env
+          fi
+
+      - name: Build Lambda Packages
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y zip
+          bash deploy/aws/build.sh
+
+      - name: Deploy to AWS Lambda & API Gateway
+        run: |
+          bash deploy/aws/deploy.sh
+
+      - name: Prune ECR Images (Keep Top 4 to Minimize Storage Cost)
+        continue-on-error: true
+        run: |
+          AWS_REGION="${AWS_REGION:-ap-south-1}"
+          REPO_NAME="makwatches-be"
+          
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "==> Setting lifecycle policy to keep only latest 4 images on ECR repo $REPO_NAME"
+            cat << 'POLICY_EOF' > /tmp/ecr-lifecycle.json
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep only latest 4 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 4
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+POLICY_EOF
+            aws ecr put-lifecycle-policy \
+              --repository-name "$REPO_NAME" \
+              --lifecycle-policy-text "file:///tmp/ecr-lifecycle.json" \
+              --region "$AWS_REGION" || true
+
+            IMAGES_TO_DELETE=$(aws ecr describe-images --repository-name "$REPO_NAME" --region "$AWS_REGION" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[::-1][4:].imageDigest' --output text)
+            
+            if [ -n "$IMAGES_TO_DELETE" ] && [ "$IMAGES_TO_DELETE" != "None" ]; then
+              echo "==> Deleting old ECR images beyond top 4 to save costs..."
+              for digest in $IMAGES_TO_DELETE; do
+                aws ecr batch-delete-image --repository-name "$REPO_NAME" --region "$AWS_REGION" \
+                  --image-ids imageDigest="$digest" || true
+              done
+            else
+              echo "==> ECR images within quota (<= 4 images). No extra images to delete."
+            fi
+          else
+            echo "==> No ECR repository '$REPO_NAME' found (Lambda uses direct Graviton ARM64 zip packaging with 0 ECR cost)."
+          fi

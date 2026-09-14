@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v5"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
@@ -218,11 +219,51 @@ func (h *ShippingHandler) GetCheckoutShippingOptions(c *fiber.Ctx) error {
 		})
 	}
 
+	cod := body.COD
+	if !cod && strings.EqualFold(c.Query("cod"), "true") {
+		cod = true
+	}
+
 	ctx := c.UserContext()
 	var binding shipping.QuoteBinding
 	var subtotal float64
 
-	if user, ok := c.Locals("user").(*middleware.TokenMetadata); ok && user != nil {
+	user, ok := c.Locals("user").(*middleware.TokenMetadata)
+	if (!ok || user == nil) && h.Config != nil && h.Config.JWTSecret != "" {
+		if authHeader := c.Get("Authorization"); authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				token, err := jwt.Parse(parts[1], func(t *jwt.Token) (interface{}, error) {
+					if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+						return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+					}
+					return []byte(h.Config.JWTSecret), nil
+				})
+				if err == nil && token.Valid {
+					if claims, ok := token.Claims.(jwt.MapClaims); ok {
+						if expFloat, ok := claims["exp"].(float64); ok && !time.Now().After(time.Unix(int64(expFloat), 0)) {
+							if userIDStr, ok := claims["userId"].(string); ok {
+								if uid, err := primitive.ObjectIDFromHex(userIDStr); err == nil {
+									role, _ := claims["role"].(string)
+									if role == "" {
+										role = "user"
+									}
+									user = &middleware.TokenMetadata{
+										UserID: uid,
+										Role:   role,
+										Exp:    time.Unix(int64(expFloat), 0),
+									}
+									c.Locals("user", user)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if user != nil {
 		if lines, sub, err := cartComposition(ctx, h.DB, user.UserID); err == nil && len(lines) > 0 {
 			binding = shipping.QuoteBinding{
 				UserID:   user.UserID.Hex(),
@@ -235,9 +276,13 @@ func (h *ShippingHandler) GetCheckoutShippingOptions(c *fiber.Ctx) error {
 	}
 
 	pkg := h.Service.DefaultPackage()
+	binding.Pincode = pincode
+	binding.WeightGrams = pkg.WeightGrams
+	binding.COD = cod
+
 	result, err := h.Service.Serviceability(ctx, "", shipping.RateRequest{
 		DeliveryPincode: pincode,
-		COD:             body.COD,
+		COD:             cod,
 		Package:         pkg,
 		DeclaredValue:   subtotal,
 	}, binding)

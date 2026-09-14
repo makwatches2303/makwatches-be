@@ -163,3 +163,69 @@ func Role(roles ...string) fiber.Handler {
         return c.Next()
     }
 }
+
+// OptionalAuth parses the Authorization header if provided and valid, populating
+// c.Locals("user") with TokenMetadata. If missing or invalid, it simply continues
+// without returning an unauthorized error.
+func OptionalAuth(jwtSecret string) fiber.Handler {
+    return func(c *fiber.Ctx) error {
+        tokenHeader := c.Get("Authorization")
+        if tokenHeader == "" {
+            return c.Next()
+        }
+
+        parts := strings.Split(tokenHeader, " ")
+        if len(parts) != 2 || parts[0] != "Bearer" {
+            return c.Next()
+        }
+
+        tokenString := parts[1]
+        token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+                return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+            }
+            return []byte(jwtSecret), nil
+        })
+
+        if err != nil || !token.Valid {
+            return c.Next()
+        }
+
+        claims, ok := token.Claims.(jwt.MapClaims)
+        if !ok {
+            return c.Next()
+        }
+
+        expFloat, ok := claims["exp"].(float64)
+        if !ok {
+            return c.Next()
+        }
+        expTime := time.Unix(int64(expFloat), 0)
+        if time.Now().After(expTime) {
+            return c.Next()
+        }
+
+        userIDStr, ok := claims["userId"].(string)
+        if !ok {
+            return c.Next()
+        }
+
+        userID, err := primitive.ObjectIDFromHex(userIDStr)
+        if err != nil {
+            return c.Next()
+        }
+
+        role, ok := claims["role"].(string)
+        if !ok {
+            role = "user"
+        }
+
+        c.Locals("user", &TokenMetadata{
+            UserID: userID,
+            Role:   role,
+            Exp:    expTime,
+        })
+
+        return c.Next()
+    }
+}

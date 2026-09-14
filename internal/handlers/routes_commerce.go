@@ -63,8 +63,8 @@ func registerPaymentRoutes(d *routeDeps) {
 func registerShippingRoutes(d *routeDeps) {
 	d.app.Get("/shipping/check-pincode/:pincode", d.shipping.CheckPincode)
 	d.app.Get("/shipping/check-pincode", d.shipping.CheckPincode)
-	d.app.Post("/checkout/shipping-options", d.shipping.GetCheckoutShippingOptions)
-	d.app.Get("/checkout/shipping-options", d.shipping.GetCheckoutShippingOptions)
+	d.app.Post("/checkout/shipping-options", middleware.OptionalAuth(d.cfg.JWTSecret), d.shipping.GetCheckoutShippingOptions)
+	d.app.Get("/checkout/shipping-options", middleware.OptionalAuth(d.cfg.JWTSecret), d.shipping.GetCheckoutShippingOptions)
 	d.app.Get("/shipping/track/:waybill", d.shipping.TrackByWaybill)
 
 	shipping := d.protectedGroup("/shipping")

@@ -48,8 +48,8 @@ func registerV1Routes(d *routeDeps) {
 	v1.Post("/coupons/validate", d.coupon.ValidateCoupon)
 
 	// Checkout delivery courier options
-	v1.Post("/checkout/shipping-options", d.shipping.GetCheckoutShippingOptions)
-	v1.Get("/checkout/shipping-options", d.shipping.GetCheckoutShippingOptions)
+	v1.Post("/checkout/shipping-options", middleware.OptionalAuth(d.cfg.JWTSecret), d.shipping.GetCheckoutShippingOptions)
+	v1.Get("/checkout/shipping-options", middleware.OptionalAuth(d.cfg.JWTSecret), d.shipping.GetCheckoutShippingOptions)
 
 	v1.Get("/health", HealthHandler)
 
