@@ -565,7 +565,15 @@ func (h *AuthHandler) GoogleCallback(c *fiber.Ctx) error {
 		return c.Redirect(fmt.Sprintf("%s/auth/callback?error=%s", frontendURL, redirectErr))
 	}
 
-	return c.Redirect(fmt.Sprintf("%s/auth/callback?token=%s&code=%s", frontendURL, token, exchangeCode))
+	// `code` only -- the whole point of minting an exchange code above was to
+	// avoid putting the raw JWT in a URL. It was appended here too as
+	// `token=`, on top of `code=`, undoing that: the frontend's callback page
+	// prefers a direct `token` param when present and skips the exchange
+	// call entirely, so the JWT still landed in browser history, server
+	// access logs and Referer headers exactly as the comment above says this
+	// is meant to prevent. The frontend already has the POST /auth/exchange
+	// fallback for when `token` is absent -- see AuthCallbackPage.
+	return c.Redirect(fmt.Sprintf("%s/auth/callback?code=%s", frontendURL, exchangeCode))
 }
 
 // ExchangeOAuthCode redeems the short-lived code GoogleCallback hands the
