@@ -190,10 +190,27 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		// Use discounted price if active
 		finalPrice := product.GetFinalPrice()
 
-		// Get first image if available
+		// The image snapshotted onto the order line.
+		//
+		// Prefers the structured Media array, which is the current field and the
+		// one the storefront renders from; Images[] is the legacy list and
+		// ImageURL the legacy single value. Reading only Images[0] meant a
+		// product migrated to Media with an empty Images[] was recorded with no
+		// image at all, and the admin order view had nothing to show.
+		//
+		// This is still a snapshot taken at purchase time -- deliberately, since
+		// an order is a record of what was bought -- so a later re-upload can
+		// still orphan it. The admin renders a clean placeholder in that case
+		// rather than a broken image.
 		productImage := ""
-		if len(product.Images) > 0 {
+		if len(product.Media) > 0 {
+			productImage = product.Media[0].URL
+		}
+		if productImage == "" && len(product.Images) > 0 {
 			productImage = product.Images[0]
+		}
+		if productImage == "" {
+			productImage = product.ImageURL
 		}
 
 		orderItem := models.OrderItem{
