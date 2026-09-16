@@ -127,7 +127,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		shippingV1:  NewShippingV1Handler(db, cfg, shippingSvc),
 		shipHooks:   NewShippingWebhookHandler(shippingSvc),
 		account:     NewAccountHandler(db, cfg),
-		upload:      NewUploadHandler(cfg, fb),
+		upload:      NewUploadHandler(cfg, fb, media),
 		settings:    NewSettingsHandler(db.MongoDB, fb),
 		catalogV1:   NewCatalogV1Handler(db, cfg, media),
 		storefront:  NewStorefrontHandler(db, cfg),

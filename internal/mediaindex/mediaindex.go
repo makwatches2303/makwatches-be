@@ -94,6 +94,35 @@ func (i *Index) Has(ctx context.Context, object string) bool {
 	return ok
 }
 
+// Note records objects this process has just written to the bucket, so they
+// are servable immediately instead of waiting out the TTL.
+//
+// Without this, an image uploaded through the admin panel is invisible to
+// every read until the inventory is next rebuilt: the object is in the
+// bucket and its URL is in the product document, but Has reports it absent
+// and resolveProductImages drops it. The admin uploads a photo, saves the
+// product, and the product comes back with no imagery -- for up to DefaultTTL.
+//
+// Accepts references in any form ObjectName understands, so callers can pass
+// the URL they just handed the client. A no-op when the inventory is
+// unavailable, since that case already passes every reference through.
+func (i *Index) Note(refs ...string) {
+	if i == nil || len(refs) == 0 {
+		return
+	}
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if !i.available || i.names == nil {
+		return
+	}
+	for _, ref := range refs {
+		if name := ObjectName(ref); name != "" {
+			i.names[name] = struct{}{}
+		}
+	}
+}
+
 // Available reports whether a usable inventory has been built. Intended for
 // diagnostics and logging, not for gating callers.
 func (i *Index) Available() bool {

@@ -72,6 +72,11 @@ func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
 		}
 	}
 
+	// Objects written in this request must be recorded in the bucket
+	// inventory, or the read path drops them as missing until its TTL expires.
+	// See mediaindex.Index.Note.
+	h.Media.Note(uploadedImages...)
+
 	// Parse product data (fields). BodyParser works for both JSON and form fields.
 	if err := c.BodyParser(&product); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -257,6 +262,11 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 			}
 		}
 	}
+
+	// Objects written in this request must be recorded in the bucket
+	// inventory, or the read path drops them as missing until its TTL expires.
+	// See mediaindex.Index.Note.
+	h.Media.Note(uploadedImages...)
 
 	// Parse product data from body (works with form fields or JSON)
 	if err := c.BodyParser(&updatedProduct); err != nil {

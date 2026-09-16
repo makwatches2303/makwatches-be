@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 )
 
 // UploadHandler handles multipart image uploads into Firebase Storage.
@@ -15,11 +16,17 @@ import (
 type UploadHandler struct {
 	Config   *config.Config
 	Firebase *firebase.Provider
+	// Media is the shared bucket inventory. Every object written here is
+	// recorded in it, or the reader would treat this upload as missing until
+	// the inventory's TTL expires and blank it out of the catalog. See
+	// mediaindex.Index.Note.
+	Media *mediaindex.Index
 }
 
-// NewUploadHandler creates an upload handler bound to the shared Firebase provider.
-func NewUploadHandler(cfg *config.Config, fb *firebase.Provider) *UploadHandler {
-	return &UploadHandler{Config: cfg, Firebase: fb}
+// NewUploadHandler creates an upload handler bound to the shared Firebase
+// provider and bucket inventory.
+func NewUploadHandler(cfg *config.Config, fb *firebase.Provider, media *mediaindex.Index) *UploadHandler {
+	return &UploadHandler{Config: cfg, Firebase: fb, Media: media}
 }
 
 // Upload stores every file in the "images" multipart field and returns their
@@ -89,6 +96,10 @@ func (h *UploadHandler) Upload(c *fiber.Ctx) error {
 
 		urls = append(urls, url)
 	}
+
+	// Before answering: the client is about to store these URLs on a product,
+	// and the read path drops references the inventory has not seen.
+	h.Media.Note(urls...)
 
 	log.Printf("[UPLOAD] Uploaded %d file(s) successfully", len(urls))
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
