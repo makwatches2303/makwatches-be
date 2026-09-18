@@ -5,6 +5,8 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"runtime/debug"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -28,6 +30,24 @@ var fiberLambda *fiberadapter.FiberLambda
 
 func init() {
 	ctx := context.Background()
+
+	// Tell the garbage collector how much room it actually has.
+	//
+	// Go sizes its heap from the machine's memory, and inside Lambda that is
+	// the host's, not the function's -- so the collector happily lets the heap
+	// grow past the limit and the runtime is killed outright with
+	// Runtime.OutOfMemory rather than collecting harder. That is exactly how
+	// importing a gallery of nineteen photographs died: image decoding is the
+	// one thing here that allocates in tens of megabytes at a time.
+	//
+	// Eighty percent leaves room for the parts of the process the Go heap does
+	// not account for (stacks, the runtime itself, cgo-free but still real
+	// allocations in the AWS SDK).
+	if size := os.Getenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE"); size != "" {
+		if mb, err := strconv.Atoi(size); err == nil && mb > 0 {
+			debug.SetMemoryLimit(int64(float64(mb) * 0.8 * 1024 * 1024))
+		}
+	}
 
 	// FIREBASE_CREDENTIALS_JSON is not set as a plain Lambda environment
 	// variable: at ~2.3KB it alone would eat most of Lambda's 4KB combined

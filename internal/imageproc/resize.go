@@ -60,6 +60,19 @@ const (
 	qualityLarge  = 88
 )
 
+// resizeSlots bounds how many images are decoded and scaled at once.
+//
+// Separate from, and much smaller than, the concurrency of the surrounding
+// work: fetching twenty photographs at once is cheap, because each one is
+// mostly waiting on a network, but decoding one is not. A 1500x1500 JPEG
+// becomes a 9 MB pixel buffer the moment it is decoded, plus another for each
+// size it is scaled to -- so eight at once is the best part of 150 MB of live
+// heap, which is how a 512 MB Lambda ran out of memory importing a gallery.
+//
+// Three keeps the peak near 50 MB while still overlapping the decode of one
+// image with the uploads of another.
+var resizeSlots = make(chan struct{}, 3)
+
 // A Rendition is one prepared size of an uploaded image.
 type Rendition struct {
 	// Suffix is appended to the object's base name, e.g. "-400w".
@@ -79,6 +92,10 @@ type Rendition struct {
 // Returns an error only when the bytes are not a decodable image; a source too
 // small for any rendition is a normal result of no renditions.
 func Renditions(src []byte) ([]Rendition, error) {
+	// Held for the whole decode-and-scale pass, which is where the memory is.
+	resizeSlots <- struct{}{}
+	defer func() { <-resizeSlots }()
+
 	decoded, format, err := image.Decode(bytes.NewReader(src))
 	if err != nil {
 		return nil, fmt.Errorf("that file is not an image we can read: %w", err)
