@@ -80,8 +80,11 @@ func ImportImages(ctx context.Context, fetcher *Fetcher, uploader Uploader, urls
 		fetcher = NewFetcher()
 	}
 
-	var imported []ImportedImage
-	var rejected []RejectedImage
+	// Non-nil from the start: a nil slice marshals to JSON null, and the
+	// panel reads these as lists. "Nothing was rejected" must arrive as an
+	// empty list, not as an absent one.
+	imported := make([]ImportedImage, 0, len(urls))
+	rejected := make([]RejectedImage, 0)
 
 	slug := slugify(nameHint)
 	if slug == "" {
