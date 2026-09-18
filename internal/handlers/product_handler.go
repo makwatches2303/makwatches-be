@@ -255,6 +255,13 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 		sortDirection = -1 // descending
 	}
 
+	// One row per watch with its colourways inside, for the admin table. Done
+	// here rather than in the panel because siblings would otherwise land on
+	// different pages of a flat list.
+	if c.Query("group") == "variants" {
+		return h.getProductGroups(c, ctx, filter, sortBy, sortDirection, page, limit)
+	}
+
 	// Configure options for pagination and sorting
 	findOptions := options.Find()
 	findOptions.SetSkip(int64((page - 1) * limit))
