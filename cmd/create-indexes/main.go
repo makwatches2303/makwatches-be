@@ -42,6 +42,10 @@ func main() {
 		{Keys: bson.D{{Key: "price", Value: 1}}},
 		{Keys: bson.D{{Key: "name", Value: 1}}},
 		{Keys: bson.D{{Key: "stock", Value: 1}}},
+		// Every product page with siblings looks its group up by this field
+		// (see catalog.ListVariants), uncached, once per render. Without an
+		// index that is a full collection scan on the hot path.
+		{Keys: bson.D{{Key: "variant_group_id", Value: 1}}},
 	}
 	names, err := products.Indexes().CreateMany(ctx, productIndexes)
 	if err != nil {

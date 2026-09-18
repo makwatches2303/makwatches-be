@@ -53,6 +53,13 @@ type Draft struct {
 	// specs above. Always presented for confirmation, never applied silently.
 	Attributes *Attributes `json:"attributes,omitempty"`
 
+	// VariantDimension names what separates the variants, e.g. "Colour".
+	VariantDimension string `json:"variantDimension,omitempty"`
+	// Variants are the other purchasable versions of the same watch. Empty
+	// for a listing that sells one thing. The images above belong to the
+	// variant marked Current, never to all of them at once.
+	Variants []Variant `json:"variants,omitempty"`
+
 	// Warnings are things the admin should look at before approving: a price
 	// we could not find, a description that is clearly truncated, images that
 	// may be a size variant of each other.
@@ -104,6 +111,10 @@ func (d *Draft) fillFrom(other *Draft) {
 	}
 	if len(d.Specs) == 0 {
 		d.Specs = other.Specs
+	}
+	if len(d.Variants) == 0 {
+		d.Variants = other.Variants
+		d.VariantDimension = other.VariantDimension
 	}
 	// Images merge rather than replace: a page often carries its gallery in
 	// one place and its highest-resolution hero in another.

@@ -45,7 +45,9 @@ func extractAmazon(doc *html.Node, base *url.URL) *Draft {
 	draft.Currency = "INR"
 	draft.Bullets = amazonBullets(doc)
 	draft.Specs = amazonSpecs(doc)
-	draft.Images = amazonImages(doc, base)
+
+	draft.VariantDimension, draft.Variants, _ = amazonVariants(doc, base)
+	draft.Images = amazonImages(doc, base, draft.Variants)
 
 	if match := asinFromPath.FindStringSubmatch(base.Path); len(match) == 2 {
 		draft.SKU = match[1]
@@ -298,13 +300,31 @@ func looksLikeSpecLabel(label string) bool {
 	return letters >= 3
 }
 
-// amazonImages collects the gallery at the highest resolution the page offers.
-func amazonImages(doc *html.Node, base *url.URL) []string {
+// amazonImages collects the gallery at the highest resolution the page offers,
+// for the colourway the page is actually showing.
+//
+// The other colourways' photographs are on the page too, and taking them all
+// produces a gallery of three different watches -- a mistake this catalogue
+// has shipped. They are returned separately by amazonVariants, and excluded
+// here by the same list.
+func amazonImages(doc *html.Node, base *url.URL, variants []Variant) []string {
 	var images []string
 
-	for _, script := range scriptContents(doc, "hiRes") {
-		for _, match := range hiResImage.FindAllStringSubmatch(script, -1) {
-			images = append(images, unescapeSlashes(match[1]))
+	// The currently-selected variant's own gallery, which is what the
+	// single-quoted 'colorImages': { 'initial': ... } block holds.
+	for _, script := range scriptContents(doc, "'initial'") {
+		if segment := initialGallery(script); segment != "" {
+			for _, match := range hiResImage.FindAllStringSubmatch(segment, -1) {
+				images = append(images, unescapeSlashes(match[1]))
+			}
+		}
+	}
+
+	if len(images) == 0 {
+		for _, script := range scriptContents(doc, "hiRes") {
+			for _, match := range hiResImage.FindAllStringSubmatch(script, -1) {
+				images = append(images, unescapeSlashes(match[1]))
+			}
 		}
 	}
 	if len(images) == 0 {
@@ -337,7 +357,69 @@ func amazonImages(doc *html.Node, base *url.URL) []string {
 	for _, image := range images {
 		upgraded = append(upgraded, UpgradeImageURL(image))
 	}
-	return upgraded
+
+	return withoutOtherVariants(upgraded, variants)
+}
+
+// withoutOtherVariants drops photographs that belong to a colourway other than
+// the one being read, so a product never ends up illustrated by a different
+// watch.
+func withoutOtherVariants(images []string, variants []Variant) []string {
+	if len(variants) == 0 {
+		return images
+	}
+
+	foreign := map[string]bool{}
+	for _, variant := range variants {
+		if variant.Current {
+			continue
+		}
+		for _, image := range variant.Images {
+			foreign[imageIdentity(image)] = true
+		}
+	}
+	if len(foreign) == 0 {
+		return images
+	}
+
+	kept := make([]string, 0, len(images))
+	for _, image := range images {
+		if !foreign[imageIdentity(image)] {
+			kept = append(kept, image)
+		}
+	}
+	return kept
+}
+
+// initialGallery returns the JSON array of the selected variant's images.
+//
+// Amazon writes it as a string argument to parseJSON inside a single-quoted
+// JavaScript literal, so it is cut out by its delimiters rather than parsed as
+// part of the surrounding object.
+func initialGallery(script string) string {
+	const marker = "'initial':"
+	start := strings.Index(script, marker)
+	if start < 0 {
+		return ""
+	}
+	open := strings.Index(script[start:], "[")
+	if open < 0 {
+		return ""
+	}
+	open += start
+	depth := 0
+	for i := open; i < len(script); i++ {
+		switch script[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth == 0 {
+				return script[open : i+1]
+			}
+		}
+	}
+	return ""
 }
 
 var jsonKey = regexp.MustCompile(`"(https?:[^"]+)"\s*:`)

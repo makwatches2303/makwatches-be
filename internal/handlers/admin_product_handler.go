@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,27 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/debuglog"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 )
+
+// requestFields reports which top-level keys a JSON body actually carried.
+//
+// Needed wherever "absent" and "empty" mean different things -- clearing a
+// field versus leaving it alone -- which BodyParser alone cannot tell apart.
+// A non-JSON (multipart) request carries no such distinction and yields an
+// empty set, which keeps the preserve-on-blank behaviour.
+func requestFields(c *fiber.Ctx) map[string]bool {
+	fields := map[string]bool{}
+	if !strings.Contains(string(c.Request().Header.ContentType()), "json") {
+		return fields
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(c.Body(), &raw); err != nil {
+		return fields
+	}
+	for key := range raw {
+		fields[key] = true
+	}
+	return fields
+}
 
 // CreateProduct adds a new product to the database (admin only)
 func (h *ProductHandler) CreateProduct(c *fiber.Ctx) error {
@@ -307,10 +329,16 @@ func (h *ProductHandler) UpdateProduct(c *fiber.Ctx) error {
 	if updatedProduct.Stock < 0 {
 		updatedProduct.Stock = existingProduct.Stock
 	}
-	if updatedProduct.VariantGroupID == "" {
+	// Variant fields keep their stored value when the request leaves them out,
+	// but an explicit empty string means "take this product out of its group".
+	// Told apart by looking at the raw body: a struct cannot distinguish a
+	// field that was absent from one that was sent empty, and without that
+	// distinction a product can never be ungrouped.
+	sentFields := requestFields(c)
+	if updatedProduct.VariantGroupID == "" && !sentFields["variantGroupId"] {
 		updatedProduct.VariantGroupID = existingProduct.VariantGroupID
 	}
-	if updatedProduct.VariantLabel == "" {
+	if updatedProduct.VariantLabel == "" && !sentFields["variantLabel"] {
 		updatedProduct.VariantLabel = existingProduct.VariantLabel
 	}
 

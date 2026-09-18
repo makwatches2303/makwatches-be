@@ -322,3 +322,88 @@ func TestExtractMetaFallsBackToSocialTags(t *testing.T) {
 		t.Errorf("images = %v, want an absolute URL", draft.Images)
 	}
 }
+
+const amazonVariantPage = `<html><body>
+<span id="productTitle">Noise Pulse 2 Max Smart Watch (Deep Wine)</span>
+<script type="text/javascript">
+ var obj = jQuery.parseJSON('{"dimensionValuesDisplayData" : {"B0B6BPTFT5":["Deep Wine"],"B0B6BLTGTT":["Jet Black"],"B0B6BQ711Q":["Rose Pink"]},
+ "variationValues" : {"color_name":["Deep Wine","Jet Black","Rose Pink"]}}');
+</script>
+<script>
+ P.when('A').register('ImageBlockATF', function(A){
+  var data = {
+   'colorImages': { 'initial': A.$.parseJSON('[{"hiRes":"https://m.media-amazon.com/images/I/61wine1._SL1500_.jpg"},{"hiRes":"https://m.media-amazon.com/images/I/61wine2._SL1500_.jpg"}]')},
+   'colorToAsin': { 'initial': '{}'}};
+ });
+</script>
+<script type="a-state">{"landingAsinColor":"Deep Wine","colorImages":{"Deep Wine":[{"hiRes":"https://m.media-amazon.com/images/I/61wine1._SL1500_.jpg"}],"Jet Black":[{"hiRes":"https://m.media-amazon.com/images/I/61black._SL1500_.jpg"}],"Rose Pink":[{"hiRes":"https://m.media-amazon.com/images/I/61pink._SL1500_.jpg"}]}}</script>
+</body></html>`
+
+func TestAmazonVariantsReadsEveryColourway(t *testing.T) {
+	doc, err := parseHTML([]byte(amazonVariantPage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := mustParse(t, "https://www.amazon.in/dp/B0B6BPTFT5")
+
+	dimension, variants, current := amazonVariants(doc, base)
+	if dimension != "Colour" {
+		t.Errorf("dimension = %q, want Colour", dimension)
+	}
+	if current != "Deep Wine" {
+		t.Errorf("current = %q, want Deep Wine", current)
+	}
+	if len(variants) != 3 {
+		t.Fatalf("got %d variants, want 3: %+v", len(variants), variants)
+	}
+
+	// The variant being viewed leads, so the admin sees the one the rest of
+	// the draft describes first.
+	if !variants[0].Current || variants[0].Label != "Deep Wine" {
+		t.Errorf("first variant = %+v, want the current one", variants[0])
+	}
+	for _, variant := range variants {
+		if variant.SKU == "" {
+			t.Errorf("variant %q has no id, so its own page cannot be reached", variant.Label)
+		}
+		if variant.URL == "" || !strings.Contains(variant.URL, variant.SKU) {
+			t.Errorf("variant %q has URL %q", variant.Label, variant.URL)
+		}
+		if len(variant.Images) == 0 {
+			t.Errorf("variant %q has no photograph", variant.Label)
+		}
+	}
+}
+
+// The whole point of reading variants separately: one product must never be
+// illustrated with another colourway's photographs.
+func TestAmazonGalleryExcludesOtherColourways(t *testing.T) {
+	doc, err := parseHTML([]byte(amazonVariantPage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft := extractAmazon(doc, mustParse(t, "https://www.amazon.in/dp/B0B6BPTFT5"))
+	if draft == nil {
+		t.Fatal("extractAmazon found nothing")
+	}
+
+	for _, image := range draft.Images {
+		if strings.Contains(image, "black") || strings.Contains(image, "pink") {
+			t.Errorf("the Deep Wine gallery contains another colourway: %v", draft.Images)
+		}
+	}
+	if len(draft.Images) != 2 {
+		t.Errorf("gallery = %v, want the two Deep Wine photographs", draft.Images)
+	}
+}
+
+func TestAmazonVariantsIgnoresASingleOption(t *testing.T) {
+	page := `<html><body><span id="productTitle">One colour only</span>
+	<script type="a-state">{"landingAsinColor":"Black","colorImages":{"Black":[{"hiRes":"https://m.media-amazon.com/images/I/61a._SL1500_.jpg"}]}}</script>
+	</body></html>`
+	doc, _ := parseHTML([]byte(page))
+	_, variants, _ := amazonVariants(doc, mustParse(t, "https://www.amazon.in/dp/B000000001"))
+	if len(variants) != 0 {
+		t.Errorf("a listing with one option produced %d variants; a picker of one is noise", len(variants))
+	}
+}
