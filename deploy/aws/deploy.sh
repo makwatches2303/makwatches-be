@@ -209,17 +209,22 @@ deploy_function "$API_FUNCTION_NAME" "$BUILD_DIR/makwatches-api.zip" "$API_ROLE_
 # decoded. Memory also buys CPU on Lambda.
 deploy_function "$WORKER_FUNCTION_NAME" "$BUILD_DIR/makwatches-shipment-worker.zip" "$WORKER_ROLE_ARN" "$TMP_DIR/worker-env.json" 60 1024
 
-# The API keeps a few execution slots to itself. This account's Lambda
-# concurrency limit is 10 in total (the new-account default), and an import
-# fans out one worker invocation per image -- so a twenty-image job took
-# every slot, the panel's next poll was throttled, and API Gateway answered
-# it with a bare 5xx the browser could only call a network error. Reserving
-# these for the API means the worker can never starve it, whatever the
-# account limit is. Raise the limit itself through Service Quotas; this
-# stays correct either way.
-aws lambda put-function-concurrency --function-name "$API_FUNCTION_NAME" \
-  --reserved-concurrent-executions 4 --region "$AWS_REGION" >/dev/null
-echo "==> Reserved 4 concurrent executions for $API_FUNCTION_NAME"
+# The API keeps a few execution slots to itself, so the worker fanning out
+# one invocation per imported image can never starve it: a twenty-image job
+# once took every slot, the panel's next poll was throttled, and API Gateway
+# answered it with a bare 5xx the browser could only call a network error.
+#
+# Best effort, because AWS refuses any reservation while an account is on the
+# new-account limit of 10 (it insists on keeping 10 unreserved). On such an
+# account the worker cap below is the whole protection -- and holds, since
+# 10 - 5 leaves the API five slots. Once the limit is raised through Service
+# Quotas, the next deploy makes the reservation as well.
+if aws lambda put-function-concurrency --function-name "$API_FUNCTION_NAME" \
+  --reserved-concurrent-executions 4 --region "$AWS_REGION" >/dev/null 2>&1; then
+  echo "==> Reserved 4 concurrent executions for $API_FUNCTION_NAME"
+else
+  echo "==> Could not reserve concurrency for $API_FUNCTION_NAME (account limit too low); relying on the worker cap"
+fi
 
 ########################################
 # 6. Event source mapping: queue -> worker
