@@ -196,7 +196,12 @@ deploy_function() {
   fi
 }
 
-deploy_function "$API_FUNCTION_NAME" "$BUILD_DIR/makwatches-api.zip" "$API_ROLE_ARN" "$TMP_DIR/api-env.json" 29 512
+# 1024 MB, raised from 512: importing a gallery decodes several 1500px
+# photographs, which killed the function outright with Runtime.OutOfMemory at
+# 509 MB. Memory also buys CPU on Lambda -- 512 MB is about a third of a core,
+# so resizing was slow as well as tight. Roughly cost-neutral: billing is per
+# GB-millisecond, and the work finishes in proportionately less time.
+deploy_function "$API_FUNCTION_NAME" "$BUILD_DIR/makwatches-api.zip" "$API_ROLE_ARN" "$TMP_DIR/api-env.json" 29 1024
 deploy_function "$WORKER_FUNCTION_NAME" "$BUILD_DIR/makwatches-shipment-worker.zip" "$WORKER_ROLE_ARN" "$TMP_DIR/worker-env.json" 30 256
 
 ########################################
