@@ -28,18 +28,36 @@ type WhatsAppFlowSettings struct {
 	AbandonedCartEnabled  bool   `bson:"abandoned_cart_enabled" json:"abandonedCartEnabled"`
 	AbandonedCartTemplate string `bson:"abandoned_cart_template" json:"abandonedCartTemplate"`
 
+	// Bindings holds, per flow ("welcome", "order", "delivery", "cart"), the
+	// language of the chosen template and what fills each of its variables.
+	// The template name itself stays in the per-flow field above, where the
+	// senders have always read it.
+	Bindings map[string]WhatsAppFlowBinding `bson:"bindings,omitempty" json:"bindings"`
+
 	// FlowSell Account & App Linking
 	PhoneNumberID        string    `bson:"phone_number_id" json:"phoneNumberId"`
 	FlowSellDashboardURL string    `bson:"flowsell_dashboard_url" json:"flowsellDashboardUrl"`
 	UpdatedAt            time.Time `bson:"updated_at" json:"updatedAt"`
 }
 
+// WhatsAppFlowBinding maps a template's variables onto MAK data. A key is a
+// template variable ("body.1", "header.customer_name", "button.0"); a value is
+// a source key ("customer_name") or "static:<text>".
+type WhatsAppFlowBinding struct {
+	Language  string            `bson:"language" json:"language"`
+	Variables map[string]string `bson:"variables" json:"variables"`
+}
+
+// FlowSellDashboardURL is where templates and automations are built. The
+// connect.* host serves the sending API only and has no template builder.
+const FlowSellDashboardURL = "https://dashboard.flowsell.in"
+
 // DefaultWhatsAppFlowSettings returns initial presets if none exist in DB.
 func DefaultWhatsAppFlowSettings() WhatsAppFlowSettings {
 	return WhatsAppFlowSettings{
 		WelcomeEnabled:            true,
 		WelcomeTemplate:           "mak_watches_welcome_modern",
-		WelcomeImageURL:            "https://storage.googleapis.com/mak-watches.firebasestorage.app/1789059897255846000-welcome-banner.jpg",
+		WelcomeImageURL:           "https://storage.googleapis.com/mak-watches.firebasestorage.app/1789059897255846000-welcome-banner.jpg",
 		OrderConfirmationEnabled:  false,
 		OrderConfirmationTemplate: "mak_order_confirmation",
 		DeliveryUpdatesEnabled:    false,
@@ -47,7 +65,7 @@ func DefaultWhatsAppFlowSettings() WhatsAppFlowSettings {
 		AbandonedCartEnabled:      true,
 		AbandonedCartTemplate:     "mak_watches_cart_reminder",
 		PhoneNumberID:             "1265231066679663",
-		FlowSellDashboardURL:      "https://connect.flowsell.in",
+		FlowSellDashboardURL:      FlowSellDashboardURL,
 		UpdatedAt:                 time.Now(),
 	}
 }
@@ -63,6 +81,8 @@ type UpdateWhatsAppFlowSettingsRequest struct {
 	DeliveryUpdatesTemplate   *string `json:"deliveryUpdatesTemplate,omitempty"`
 	AbandonedCartEnabled      *bool   `json:"abandonedCartEnabled,omitempty"`
 	AbandonedCartTemplate     *string `json:"abandonedCartTemplate,omitempty"`
+
+	Bindings map[string]WhatsAppFlowBinding `json:"bindings,omitempty"`
 }
 
 // WhatsAppTestRequest represents request to send a test message.
@@ -70,4 +90,10 @@ type WhatsAppTestRequest struct {
 	Phone    string `json:"phone" validate:"required"`
 	Template string `json:"template"`
 	Flow     string `json:"flow"` // "welcome", "cart", "order", "delivery"
+
+	// Language, Variables and HeaderImageURL let the panel test what is on
+	// screen before it is saved. Omitted, the saved binding is used.
+	Language       string            `json:"language"`
+	Variables      map[string]string `json:"variables"`
+	HeaderImageURL string            `json:"headerImageUrl"`
 }

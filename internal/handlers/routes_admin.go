@@ -164,5 +164,6 @@ func registerAdminWhatsAppRoutes(d *routeDeps) {
 	wa := d.admin.Group("/whatsapp")
 	wa.Get("/settings", d.whatsappSettings.GetSettings)
 	wa.Put("/settings", d.whatsappSettings.UpdateSettings)
+	wa.Get("/templates", d.whatsappSettings.GetTemplates)
 	wa.Post("/test", d.whatsappSettings.SendTest)
 }

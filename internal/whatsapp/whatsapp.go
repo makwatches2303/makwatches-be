@@ -27,6 +27,9 @@ type Client struct {
 	CartTemplate    string
 	WelcomeImageURL string
 	httpClient      *http.Client
+
+	templates templateCache
+	bindings  BindingLoader
 }
 
 // NewClient creates a new instance of WhatsApp client
@@ -146,6 +149,19 @@ func (c *Client) SendWelcomeTemplate(ctx context.Context, toPhone, customerName 
 		name = "Valued Customer"
 	}
 
+	// The admin's bound template wins. Only a flow with nothing bound yet
+	// falls through to the built-in template below.
+	if handled, err := c.sendBound(ctx, FlowWelcome, normalizedPhone, map[string]string{"customer_name": name}); handled {
+		if err == nil || errors.Is(err, ErrFlowDisabled) {
+			return nil
+		}
+		log.Printf("[WHATSAPP] Bound welcome template failed: %v. Attempting interactive card...", err)
+		if intErr := c.SendInteractiveWelcome(ctx, normalizedPhone, name); intErr == nil {
+			return nil
+		}
+		return err
+	}
+
 	payload := TemplatePayload{
 		Channel:       "whatsapp",
 		PhoneNumberID: c.PhoneNumberID,
@@ -198,6 +214,14 @@ func (c *Client) SendAbandonedCartTemplate(ctx context.Context, toPhone, custome
 		product = "selected timepiece"
 	}
 
+	if handled, err := c.sendBound(ctx, FlowCart, normalizedPhone, map[string]string{
+		"customer_name": name,
+		"product_name":  product,
+		"cart_url":      "https://makwatches.in/cart",
+	}); handled {
+		return err
+	}
+
 	payload := TemplatePayload{
 		Channel:       "whatsapp",
 		PhoneNumberID: c.PhoneNumberID,
@@ -217,6 +241,23 @@ func (c *Client) SendAbandonedCartTemplate(ctx context.Context, toPhone, custome
 		return c.SendTextMessage(ctx, normalizedPhone, cartText)
 	}
 	return nil
+}
+
+// sendBound sends the admin-bound template for a flow. handled is false only
+// when nothing is bound, which leaves the caller on its built-in template.
+func (c *Client) sendBound(ctx context.Context, flow, to string, values map[string]string) (handled bool, err error) {
+	if c.bindings == nil {
+		return false, nil
+	}
+	binding, ok := c.bindings(ctx, flow)
+	if !ok || binding.Template == "" {
+		return false, nil
+	}
+	if !binding.Enabled {
+		log.Printf("[WHATSAPP] %s flow is switched off; skipping %s", flow, to)
+		return true, ErrFlowDisabled
+	}
+	return true, c.SendBinding(ctx, flow, to, binding, values)
 }
 
 // SendInteractiveWelcome sends the rich interactive welcome message with image header and buttons
