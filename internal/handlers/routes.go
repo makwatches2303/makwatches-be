@@ -13,8 +13,8 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 	shippingsetup "github.com/shivam-mishra-20/mak-watches-be/internal/shipping/setup"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 )

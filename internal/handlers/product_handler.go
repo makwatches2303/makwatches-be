@@ -116,6 +116,26 @@ func (h *ProductHandler) resolveProductListImages(ctx context.Context, products 
 	}
 }
 
+// sortField maps the JSON name a client sorts by onto the stored field.
+//
+// Clients speak the API's camelCase; Mongo stores snake_case. "createdAt" is
+// not a field on any document, so sorting by it sorted by nothing -- newest
+// and oldest returned the same order -- while "price", "name" and "stock"
+// happen to spell the same both ways and always worked. Unknown names fall
+// back to creation time rather than to whatever Mongo does with a bad key.
+func sortField(name string) string {
+	switch name {
+	case "createdAt", "created_at", "":
+		return "created_at"
+	case "updatedAt", "updated_at":
+		return "updated_at"
+	case "price", "name", "stock", "brand", "category":
+		return name
+	default:
+		return "created_at"
+	}
+}
+
 // GetProducts returns all products with optional filters
 func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	ctx := c.Context()
@@ -134,8 +154,8 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	brandParam := strings.TrimSpace(c.Query("brand"))
 	stockState := strings.ToLower(strings.TrimSpace(c.Query("stock")))
 	gender := strings.TrimSpace(c.Query("gender"))
-	sortBy := c.Query("sortBy", "createdAt") // Default sort by createdAt
-	order := c.Query("order", "desc")        // Default order desc
+	sortBy := sortField(c.Query("sortBy", "createdAt"))
+	order := c.Query("order", "desc") // Default order desc
 	pageStr := c.Query("page", "1")
 	limitStr := c.Query("limit", "10")
 

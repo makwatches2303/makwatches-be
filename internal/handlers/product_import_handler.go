@@ -12,6 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
@@ -352,6 +353,49 @@ func (h *ProductImportHandler) GetImportJob(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"success": true, "data": jobView(&job)})
+}
+
+// ListImportJobs returns the most recent imports, newest first, so the panel
+// can show what is running and what just finished without keeping its own
+// list -- which would be lost on reload and invisible to a second admin.
+func (h *ProductImportHandler) ListImportJobs(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	cursor, err := h.DB.Collections().ImageImportJobs.Find(ctx, bson.M{},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(12))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"code":    "JOBS_UNAVAILABLE",
+			"message": "We could not read recent imports.",
+			"detail":  err.Error(),
+		})
+	}
+	defer cursor.Close(ctx)
+
+	var jobs []models.ImageImportJob
+	if err := cursor.All(ctx, &jobs); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"code":    "JOBS_UNAVAILABLE",
+			"message": "We could not read recent imports.",
+			"detail":  err.Error(),
+		})
+	}
+
+	views := make([]fiber.Map, 0, len(jobs))
+	for i := range jobs {
+		job := &jobs[i]
+		if _, _, pending := job.Counts(); pending == 0 && job.Status != models.ImportJobCompleted {
+			job.Status = models.ImportJobCompleted
+		}
+		view := jobView(job)
+		view["name"] = job.Name
+		view["createdAt"] = job.CreatedAt
+		// The image list is the heavy part and the list view only needs counts.
+		delete(view, "images")
+		views = append(views, view)
+	}
+	return c.JSON(fiber.Map{"success": true, "data": views})
 }
 
 // storeInline does the worker's job in-process, for environments without one.

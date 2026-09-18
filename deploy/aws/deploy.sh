@@ -209,17 +209,37 @@ deploy_function "$API_FUNCTION_NAME" "$BUILD_DIR/makwatches-api.zip" "$API_ROLE_
 # decoded. Memory also buys CPU on Lambda.
 deploy_function "$WORKER_FUNCTION_NAME" "$BUILD_DIR/makwatches-shipment-worker.zip" "$WORKER_ROLE_ARN" "$TMP_DIR/worker-env.json" 60 1024
 
+# The API keeps a few execution slots to itself. This account's Lambda
+# concurrency limit is 10 in total (the new-account default), and an import
+# fans out one worker invocation per image -- so a twenty-image job took
+# every slot, the panel's next poll was throttled, and API Gateway answered
+# it with a bare 5xx the browser could only call a network error. Reserving
+# these for the API means the worker can never starve it, whatever the
+# account limit is. Raise the limit itself through Service Quotas; this
+# stays correct either way.
+aws lambda put-function-concurrency --function-name "$API_FUNCTION_NAME" \
+  --reserved-concurrent-executions 4 --region "$AWS_REGION" >/dev/null
+echo "==> Reserved 4 concurrent executions for $API_FUNCTION_NAME"
+
 ########################################
 # 6. Event source mapping: queue -> worker
 ########################################
 ESM_ID=$(aws lambda list-event-source-mappings --function-name "$WORKER_FUNCTION_NAME" \
   --event-source-arn "$QUEUE_ARN" --region "$AWS_REGION" --query "EventSourceMappings[0].UUID" --output text)
+# The worker drains the queue at most WORKER_MAX_CONCURRENCY messages at a
+# time. With 4 slots reserved for the API above, this keeps the two inside the
+# account's limit of 10 together; a twenty-image import still finishes in a
+# few waves of a couple of seconds each. Lambda's floor for this setting is 2.
+WORKER_MAX_CONCURRENCY="${WORKER_MAX_CONCURRENCY:-5}"
 if [ -z "$ESM_ID" ] || [ "$ESM_ID" == "None" ]; then
   aws lambda create-event-source-mapping --function-name "$WORKER_FUNCTION_NAME" \
-    --event-source-arn "$QUEUE_ARN" --batch-size 1 --region "$AWS_REGION" >/dev/null
-  echo "==> Wired $QUEUE_NAME -> $WORKER_FUNCTION_NAME (batch size 1)"
+    --event-source-arn "$QUEUE_ARN" --batch-size 1 \
+    --scaling-config "MaximumConcurrency=$WORKER_MAX_CONCURRENCY" --region "$AWS_REGION" >/dev/null
+  echo "==> Wired $QUEUE_NAME -> $WORKER_FUNCTION_NAME (batch size 1, max concurrency $WORKER_MAX_CONCURRENCY)"
 else
-  echo "==> Event source mapping already exists"
+  aws lambda update-event-source-mapping --uuid "$ESM_ID" \
+    --scaling-config "MaximumConcurrency=$WORKER_MAX_CONCURRENCY" --region "$AWS_REGION" >/dev/null
+  echo "==> Event source mapping exists; worker max concurrency set to $WORKER_MAX_CONCURRENCY"
 fi
 
 ########################################

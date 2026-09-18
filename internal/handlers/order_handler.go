@@ -27,8 +27,8 @@ import (
 
 // OrderHandler handles order related requests
 type OrderHandler struct {
-	DB       *database.DBClient
-	Config   *config.Config
+	DB     *database.DBClient
+	Config *config.Config
 	// Shipping is the provider-neutral shipping service. The handler holds no
 	// carrier client of its own: booking a parcel at checkout and booking one
 	// from the admin retry endpoint now run the same code, against whichever
@@ -480,7 +480,7 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		// Snapshot the delivery choice so the order stays explainable later,
 		// and so an admin retry books the courier the customer actually paid
 		// for rather than re-quoting weeks afterwards.
-		ShippingOption: rateChoiceFrom(verifiedQuote),
+		ShippingOption:  rateChoiceFrom(verifiedQuote),
 		Status:          orderStatus,
 		PaymentStatus:   paymentStatus,
 		ShippingAddress: req.ShippingAddress,
@@ -619,6 +619,7 @@ func (h *OrderHandler) bookShipment(order models.Order, quote *shipping.Verified
 	log.Printf("[CHECKOUT] shipment booked for order %s: provider=%s tracking=%s",
 		display, shipment.Provider, shipment.TrackingNumber)
 }
+
 // GetOrders retrieves order history for a user
 func (h *OrderHandler) GetOrders(c *fiber.Ctx) error {
 	ctx := c.Context()
