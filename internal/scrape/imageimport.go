@@ -48,8 +48,11 @@ const (
 	// minImageEdge the image is accepted with a warning: better an admin
 	// decides than an import silently drops the only photo a page had.
 	preferredEdge = 800
-	// maxImagesPerImport caps a single approval.
-	maxImagesPerImport = 12
+	// maxImagesPerImport caps a single approval. Raised from twelve once one
+	// approval could cover a whole variant group: the gallery of the colourway
+	// being viewed plus a photograph for each of its siblings. Twenty-four at
+	// eight at a time stays inside the API gateway's own timeout.
+	maxImagesPerImport = 24
 	// importConcurrency is how many images are fetched, resized and stored at
 	// once. Each one is mostly waiting -- on the source CDN, then on the
 	// bucket -- so running them one after another made a twelve-photo import
