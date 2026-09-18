@@ -186,7 +186,9 @@ func (h *ProductImportHandler) ImportImages(c *fiber.Ctx) error {
 		})
 	}
 
+	started := time.Now()
 	imported, rejected := scrape.ImportImages(ctx, h.Fetcher, client, req.Images, req.SourceURL, req.Name)
+	elapsed := time.Since(started)
 
 	urls := make([]string, 0, len(imported))
 	for _, image := range imported {
@@ -206,7 +208,12 @@ func (h *ProductImportHandler) ImportImages(c *fiber.Ctx) error {
 		})
 	}
 
-	log.Printf("[IMPORT] imported %d image(s), rejected %d, from %q", len(imported), len(rejected), req.SourceURL)
+	// Timed because this is the one request an admin waits on, and the cost is
+	// latency to two other services rather than anything done here -- so when
+	// it gets slow, the number of images is what explains it.
+	log.Printf("[IMPORT] imported %d image(s), rejected %d, in %v (%v each) from %q",
+		len(imported), len(rejected), elapsed.Round(time.Millisecond),
+		(elapsed / time.Duration(max(len(req.Images), 1))).Round(time.Millisecond), req.SourceURL)
 
 	return c.JSON(fiber.Map{
 		"success": true,

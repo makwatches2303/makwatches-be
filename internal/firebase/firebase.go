@@ -100,6 +100,11 @@ func (f *FirebaseClient) upload(ctx context.Context, file io.Reader, objectName,
 	default:
 		wc.ContentType = "image/jpeg" // default
 	}
+	// Public-read is set on the write itself rather than with a follow-up
+	// ACL call. Both do the same thing, but the follow-up is a second round
+	// trip per object -- and an import that stores a gallery and its
+	// thumbnails makes dozens of them, where the latency is the whole cost.
+	wc.PredefinedACL = "publicRead"
 	log.Printf("[FIREBASE] Set content type: %s", wc.ContentType)
 
 	log.Println("[FIREBASE] Copying file data...")
@@ -112,14 +117,6 @@ func (f *FirebaseClient) upload(ctx context.Context, file io.Reader, objectName,
 	if err := wc.Close(); err != nil {
 		log.Printf("[FIREBASE] Failed to close writer: %v", err)
 		return "", fmt.Errorf("failed to close writer: %w", err)
-	}
-
-	log.Println("[FIREBASE] Setting public access...")
-	// Make the file public
-	obj := f.StorageClient.Bucket(f.BucketName).Object(objectName)
-	if err := obj.ACL().Set(ctx, storage.AllUsers, storage.RoleReader); err != nil {
-		log.Printf("[FIREBASE] Failed to set public access: %v", err)
-		return "", fmt.Errorf("failed to set public access: %w", err)
 	}
 
 	publicURL := fmt.Sprintf("https://storage.googleapis.com/%s/%s", f.BucketName, objectName)

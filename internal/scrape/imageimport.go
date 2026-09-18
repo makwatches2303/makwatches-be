@@ -224,7 +224,7 @@ func importOne(ctx context.Context, fetcher *Fetcher, uploader Uploader, raw, re
 	// Renditions are named after the object the bucket actually stored, not
 	// after the name we asked for: the two differ, since UploadFile adds a
 	// timestamp, and a rendition named after the wrong one is never found.
-	result.Renditions = imageproc.Store(ctx, uploader, page.Body, objectNameOf(url))
+	result.Renditions = imageproc.StoreSizes(ctx, uploader, page.Body, objectNameOf(url), imageproc.ThumbWidth)
 
 	return result, nil
 }

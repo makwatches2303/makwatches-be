@@ -240,6 +240,19 @@ type Uploader interface {
 // upload for. The read path checks whether a rendition exists before pointing
 // anyone at one, so a missing rendition is simply never used.
 func Store(ctx context.Context, uploader Uploader, original []byte, name string) map[string]string {
+	return StoreSizes(ctx, uploader, original, name)
+}
+
+// StoreSizes writes only the renditions whose width is listed, or all of them
+// when none is.
+//
+// The import path asks for the thumbnail alone. Every stored object is a round
+// trip to the bucket, and on a gallery of nineteen photographs that latency is
+// the entire cost of the request -- while the thumbnail is the one size the
+// listing pages actually need. The rest are filled in afterwards by
+// cmd/backfill-renditions, and until they exist the read path serves the
+// original, exactly as it does for every image uploaded before renditions.
+func StoreSizes(ctx context.Context, uploader Uploader, original []byte, name string, widths ...int) map[string]string {
 	renditions, err := Renditions(original)
 	if err != nil {
 		log.Printf("[IMAGEPROC] could not resize %s: %v", name, err)
@@ -247,6 +260,20 @@ func Store(ctx context.Context, uploader Uploader, original []byte, name string)
 	}
 	if len(renditions) == 0 {
 		return nil
+	}
+
+	if len(widths) > 0 {
+		wanted := make(map[int]bool, len(widths))
+		for _, width := range widths {
+			wanted[width] = true
+		}
+		kept := renditions[:0]
+		for _, rendition := range renditions {
+			if wanted[rendition.Width] {
+				kept = append(kept, rendition)
+			}
+		}
+		renditions = kept
 	}
 
 	stored := make(map[string]string, len(renditions))
