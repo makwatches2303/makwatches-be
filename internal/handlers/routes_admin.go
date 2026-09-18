@@ -1,5 +1,7 @@
 package handlers
 
+import "time"
+
 // registerAdminRoutes wires everything under /admin. The group already carries
 // JWT auth plus the admin role check (see SetupRoutes), so nothing here repeats
 // that middleware.
@@ -18,6 +20,21 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminSecurityRoutes(d)
 	registerAdminCouponRoutes(d)
 	registerAdminWhatsAppRoutes(d)
+	registerAdminProductImportRoutes(d)
+}
+
+// registerAdminProductImportRoutes wires filling the catalogue from a product
+// page elsewhere on the web: read it into a draft, then -- once an admin has
+// approved what they saw -- copy the images they kept into our own storage.
+//
+// Rate limited because each call is an outbound request to someone else's
+// server made on our IP: a stuck browser tab retrying, or an admin pasting a
+// list of fifty URLs, should look like a person using a tool rather than
+// like a crawler, or the marketplaces will simply stop answering us.
+func registerAdminProductImportRoutes(d *routeDeps) {
+	products := d.admin.Group("/products")
+	products.Post("/scrape", rateLimit(20, time.Minute), d.productImport.ScrapeProduct)
+	products.Post("/import-images", rateLimit(20, time.Minute), d.productImport.ImportImages)
 }
 
 // registerAdminSecurityRoutes wires the admin dashboard's Security tab:

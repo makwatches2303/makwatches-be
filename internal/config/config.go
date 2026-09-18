@@ -39,21 +39,29 @@ type Config struct {
 	// Firebase settings
 	FirebaseCredentialsJSON string
 	FirebaseBucketName      string
+
+	// ScrapeProxyTemplate is an optional reader/proxy URL used to retry a
+	// product page that refused a direct request (marketplace bot walls).
+	// "{url}" is replaced with the URL-encoded target, "{rawUrl}" with the
+	// plain one. Empty means no retry: a blocked page is reported as blocked
+	// rather than quietly routed through a third party, which is a decision
+	// about who sees our traffic and so belongs in configuration.
+	ScrapeProxyTemplate string
 	// Delhivery settings
-	DelhiveryAPIToken       string
-	DelhiveryBaseURL        string
-	DelhiveryPickupLocation string
-	DelhiverySellerName     string
-	DelhiverySellerPhone    string
-	DelhiverySellerAddress  string
-	DelhiverySellerCity     string
-	DelhiverySellerState    string
-	DelhiverySellerPincode  string
-	DelhiveryReturnAddress  string
-	DelhiveryReturnCity     string
-	DelhiveryReturnState    string
-	DelhiveryReturnPincode  string
-	DelhiveryReturnPhone    string
+	DelhiveryAPIToken           string
+	DelhiveryBaseURL            string
+	DelhiveryPickupLocation     string
+	DelhiverySellerName         string
+	DelhiverySellerPhone        string
+	DelhiverySellerAddress      string
+	DelhiverySellerCity         string
+	DelhiverySellerState        string
+	DelhiverySellerPincode      string
+	DelhiveryReturnAddress      string
+	DelhiveryReturnCity         string
+	DelhiveryReturnState        string
+	DelhiveryReturnPincode      string
+	DelhiveryReturnPhone        string
 	DelhiveryWebhookSecret      string
 	DelhiveryWebhookToken       string
 	DelhiveryFlatShippingCharge float64
@@ -100,8 +108,8 @@ func LoadConfig() (*Config, error) {
 
 	// Set defaults and override with environment variables if they exist
 	cfg := &Config{
-		Port:               getEnv("PORT", "8080"),
-		Environment:        getEnv("ENVIRONMENT", "development"),
+		Port:        getEnv("PORT", "8080"),
+		Environment: getEnv("ENVIRONMENT", "development"),
 		FrontendURL: func() string {
 			if v := getEnv("FRONTEND_URL", ""); v != "" {
 				return strings.TrimRight(v, "/")
@@ -141,21 +149,22 @@ func LoadConfig() (*Config, error) {
 		// Firebase config
 		FirebaseCredentialsJSON: getEnv("FIREBASE_CREDENTIALS_JSON", ""),
 		FirebaseBucketName:      getEnv("FIREBASE_BUCKET_NAME", "mak-watches.firebasestorage.app"),
+		ScrapeProxyTemplate:     getEnv("SCRAPE_PROXY_TEMPLATE", ""),
 		// Delhivery config
-		DelhiveryAPIToken:       getEnv("DELHIVERY_API_TOKEN", ""),
-		DelhiveryBaseURL:        getEnv("DELHIVERY_BASE_URL", "https://track.delhivery.com"), // Use https://staging-express.delhivery.com for staging
-		DelhiveryPickupLocation: getEnv("DELHIVERY_PICKUP_LOCATION", "Shree Ganesh Watch"),
-		DelhiverySellerName:     getEnv("DELHIVERY_SELLER_NAME", "Mak Watches"),
-		DelhiverySellerPhone:    getEnv("DELHIVERY_SELLER_PHONE", "9974959693"),
-		DelhiverySellerAddress:  getEnv("DELHIVERY_SELLER_ADDRESS", "Shree Ganesh Watch, Matva Street, Near Balaji Complex, Stand chowk, Jetpur, Rajkot"),
-		DelhiverySellerCity:     getEnv("DELHIVERY_SELLER_CITY", "Jetpur"),
-		DelhiverySellerState:    getEnv("DELHIVERY_SELLER_STATE", "Gujarat"),
-		DelhiverySellerPincode:  getEnv("DELHIVERY_SELLER_PINCODE", "360370"),
-		DelhiveryReturnAddress:  getEnv("DELHIVERY_RETURN_ADDRESS", "Shree Ganesh Watch, Matva Street, Near Balaji Complex, Stand chowk, Jetpur, Rajkot"),
-		DelhiveryReturnCity:     getEnv("DELHIVERY_RETURN_CITY", "Jetpur"),
-		DelhiveryReturnState:    getEnv("DELHIVERY_RETURN_STATE", "Gujarat"),
-		DelhiveryReturnPincode:  getEnv("DELHIVERY_RETURN_PINCODE", "360370"),
-		DelhiveryReturnPhone:    getEnv("DELHIVERY_RETURN_PHONE", "9974959693"),
+		DelhiveryAPIToken:           getEnv("DELHIVERY_API_TOKEN", ""),
+		DelhiveryBaseURL:            getEnv("DELHIVERY_BASE_URL", "https://track.delhivery.com"), // Use https://staging-express.delhivery.com for staging
+		DelhiveryPickupLocation:     getEnv("DELHIVERY_PICKUP_LOCATION", "Shree Ganesh Watch"),
+		DelhiverySellerName:         getEnv("DELHIVERY_SELLER_NAME", "Mak Watches"),
+		DelhiverySellerPhone:        getEnv("DELHIVERY_SELLER_PHONE", "9974959693"),
+		DelhiverySellerAddress:      getEnv("DELHIVERY_SELLER_ADDRESS", "Shree Ganesh Watch, Matva Street, Near Balaji Complex, Stand chowk, Jetpur, Rajkot"),
+		DelhiverySellerCity:         getEnv("DELHIVERY_SELLER_CITY", "Jetpur"),
+		DelhiverySellerState:        getEnv("DELHIVERY_SELLER_STATE", "Gujarat"),
+		DelhiverySellerPincode:      getEnv("DELHIVERY_SELLER_PINCODE", "360370"),
+		DelhiveryReturnAddress:      getEnv("DELHIVERY_RETURN_ADDRESS", "Shree Ganesh Watch, Matva Street, Near Balaji Complex, Stand chowk, Jetpur, Rajkot"),
+		DelhiveryReturnCity:         getEnv("DELHIVERY_RETURN_CITY", "Jetpur"),
+		DelhiveryReturnState:        getEnv("DELHIVERY_RETURN_STATE", "Gujarat"),
+		DelhiveryReturnPincode:      getEnv("DELHIVERY_RETURN_PINCODE", "360370"),
+		DelhiveryReturnPhone:        getEnv("DELHIVERY_RETURN_PHONE", "9974959693"),
 		DelhiveryWebhookSecret:      getEnv("DELHIVERY_WEBHOOK_SECRET", getEnv("DELHIVERY_WEBHOOK_TOKEN", "")),
 		DelhiveryWebhookToken:       getEnv("DELHIVERY_WEBHOOK_TOKEN", ""),
 		DelhiveryFlatShippingCharge: getEnvAsFloat("DELHIVERY_FLAT_SHIPPING_CHARGE", 0),

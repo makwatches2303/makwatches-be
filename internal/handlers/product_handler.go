@@ -108,6 +108,13 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	minPriceStr := c.Query("minPrice")
 	maxPriceStr := c.Query("maxPrice")
 	search := strings.TrimSpace(c.Query("q"))
+	// Brand, stock state and gender exist for the admin product table, which
+	// manages a catalogue of hundreds from one screen: searching by name is
+	// no way to find "every Fastrack that is out of stock". The storefront's
+	// own filtered read is GetPublicProducts; this one stays the admin's.
+	brandParam := strings.TrimSpace(c.Query("brand"))
+	stockState := strings.ToLower(strings.TrimSpace(c.Query("stock")))
+	gender := strings.TrimSpace(c.Query("gender"))
 	sortBy := c.Query("sortBy", "createdAt") // Default sort by createdAt
 	order := c.Query("order", "desc")        // Default order desc
 	pageStr := c.Query("page", "1")
@@ -134,6 +141,42 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 		filter["category"] = mainCategory + "/" + subcategory
 	} else if mainCategory != "" {
 		filter["category"] = bson.M{"$regex": fmt.Sprintf("^%s", mainCategory)}
+	}
+
+	if brandParam != "" {
+		var brands []string
+		for _, brand := range strings.Split(brandParam, ",") {
+			if trimmed := strings.TrimSpace(brand); trimmed != "" {
+				brands = append(brands, trimmed)
+			}
+		}
+		if len(brands) == 1 {
+			// Exact, but case-insensitive and anchored: the same brand is
+			// spelt "Fastrack" and "FASTRACK" across imports, and a filter
+			// that misses half a brand's products is worse than none.
+			filter["brand"] = bson.M{"$regex": "^" + regexp.QuoteMeta(brands[0]) + "$", "$options": "i"}
+		} else if len(brands) > 1 {
+			patterns := make(bson.A, 0, len(brands))
+			for _, brand := range brands {
+				patterns = append(patterns, bson.M{"brand": bson.M{"$regex": "^" + regexp.QuoteMeta(brand) + "$", "$options": "i"}})
+			}
+			filter["$and"] = bson.A{bson.M{"$or": patterns}}
+		}
+	}
+
+	if gender != "" {
+		filter["gender"] = bson.M{"$regex": "^" + regexp.QuoteMeta(gender) + "$", "$options": "i"}
+	}
+
+	// Stock state, in the three groupings an admin actually acts on: what can
+	// be sold, what is about to run out, and what is already unsellable.
+	switch stockState {
+	case "in":
+		filter["stock"] = bson.M{"$gt": 0}
+	case "low":
+		filter["stock"] = bson.M{"$gt": 0, "$lte": 10}
+	case "out":
+		filter["stock"] = bson.M{"$lte": 0}
 	}
 
 	// Add price range filters if provided
@@ -184,8 +227,8 @@ func (h *ProductHandler) GetProducts(c *fiber.Ctx) error {
 	// combination at once via BumpCacheVersion, instead of a write path
 	// having to guess this exact key -- see CacheVersion's doc comment.
 	cacheVersion := h.DB.CacheVersion(ctx, "products")
-	cacheKey := fmt.Sprintf("products:v%d:%s:%s:%s:%s:%s:%s:%d:%d",
-		cacheVersion, category, minPriceStr, maxPriceStr, search, sortBy, order, page, limit)
+	cacheKey := fmt.Sprintf("products:v%d:%s:%s:%s:%s:%s:%s:%s:%s:%s:%d:%d",
+		cacheVersion, category, minPriceStr, maxPriceStr, search, brandParam, stockState, gender, sortBy, order, page, limit)
 
 	collection := h.DB.Collections().Products
 

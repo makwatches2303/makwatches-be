@@ -14,8 +14,8 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
-	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 	shippingsetup "github.com/shivam-mishra-20/mak-watches-be/internal/shipping/setup"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 )
 
 // routeDeps carries everything the domain registrars need.
@@ -58,16 +58,18 @@ type routeDeps struct {
 	shipping    *ShippingHandler
 	shippingV1  *ShippingV1Handler
 	// shipHooks serves the authenticated carrier callbacks for every provider.
-	shipHooks   *ShippingWebhookHandler
-	account     *AccountHandler
-	upload      *UploadHandler
-	settings    *SettingsHandler
-	catalogV1   *CatalogV1Handler
-	storefront  *StorefrontHandler
-	subscriber  *SubscriberHandler
-	cartTracker *CartTrackerHandler
-	analytics   *AnalyticsHandler
-	coupon      *CouponHandler
+	shipHooks *ShippingWebhookHandler
+	account   *AccountHandler
+	upload    *UploadHandler
+	// productImport reads a product page elsewhere on the web into a draft.
+	productImport    *ProductImportHandler
+	settings         *SettingsHandler
+	catalogV1        *CatalogV1Handler
+	storefront       *StorefrontHandler
+	subscriber       *SubscriberHandler
+	cartTracker      *CartTrackerHandler
+	analytics        *AnalyticsHandler
+	coupon           *CouponHandler
 	whatsappSettings *WhatsAppSettingsHandler
 }
 
@@ -110,29 +112,30 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		firebase: fb,
 		media:    media,
 
-		auth:        NewAuthHandler(db, cfg),
-		product:     NewProductHandler(db, cfg, fb, media),
-		cart:        NewCartHandler(db, cfg),
-		order:       NewOrderHandler(db, cfg, shippingSvc),
-		payment:     NewPaymentHandler(db, cfg, shippingSvc),
-		rec:         NewRecommendationHandler(db, cfg),
-		userProfile: NewUserProfileHandler(db, cfg),
-		wishlist:    NewWishlistHandler(db, cfg),
-		addressBook: NewAddressBookHandler(db, cfg),
-		adminAcct:   &AdminAccountHandler{DB: db},
-		category:    NewCategoryHandler(db, cfg),
-		homeContent: NewHomeContentHandler(db, cfg),
-		review:      NewReviewHandler(db, cfg),
-		shipping:    NewShippingHandler(db, cfg, shippingSvc),
-		shippingV1:  NewShippingV1Handler(db, cfg, shippingSvc),
-		shipHooks:   NewShippingWebhookHandler(shippingSvc),
-		account:     NewAccountHandler(db, cfg),
-		upload:      NewUploadHandler(cfg, fb, media),
-		settings:    NewSettingsHandler(db.MongoDB, fb),
-		catalogV1:   NewCatalogV1Handler(db, cfg, media),
-		storefront:  NewStorefrontHandler(db, cfg),
-		analytics:   NewAnalyticsHandler(db, cfg),
-		coupon:      NewCouponHandler(db, cfg),
+		auth:          NewAuthHandler(db, cfg),
+		product:       NewProductHandler(db, cfg, fb, media),
+		cart:          NewCartHandler(db, cfg),
+		order:         NewOrderHandler(db, cfg, shippingSvc),
+		payment:       NewPaymentHandler(db, cfg, shippingSvc),
+		rec:           NewRecommendationHandler(db, cfg),
+		userProfile:   NewUserProfileHandler(db, cfg),
+		wishlist:      NewWishlistHandler(db, cfg),
+		addressBook:   NewAddressBookHandler(db, cfg),
+		adminAcct:     &AdminAccountHandler{DB: db},
+		category:      NewCategoryHandler(db, cfg),
+		homeContent:   NewHomeContentHandler(db, cfg),
+		review:        NewReviewHandler(db, cfg),
+		shipping:      NewShippingHandler(db, cfg, shippingSvc),
+		shippingV1:    NewShippingV1Handler(db, cfg, shippingSvc),
+		shipHooks:     NewShippingWebhookHandler(shippingSvc),
+		account:       NewAccountHandler(db, cfg),
+		upload:        NewUploadHandler(cfg, fb, media),
+		productImport: NewProductImportHandler(cfg, fb, media),
+		settings:      NewSettingsHandler(db.MongoDB, fb),
+		catalogV1:     NewCatalogV1Handler(db, cfg, media),
+		storefront:    NewStorefrontHandler(db, cfg),
+		analytics:     NewAnalyticsHandler(db, cfg),
+		coupon:        NewCouponHandler(db, cfg),
 	}
 
 	wa := whatsapp.NewClient(cfg)
