@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/valyala/fasthttp"
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/scrape"
 )
 
@@ -182,8 +184,82 @@ func TestImportImagesReportsPerImageFailures(t *testing.T) {
 }
 
 func TestNewProductImportHandlerUsesConfiguredProxy(t *testing.T) {
-	handler := NewProductImportHandler(&config.Config{ScrapeProxyTemplate: "https://reader.test/{url}"}, nil, nil)
+	handler := NewProductImportHandler(&config.Config{ScrapeProxyTemplate: "https://reader.test/{url}"}, nil, nil, nil, nil)
 	if handler.Scraper == nil || handler.Fetcher == nil {
 		t.Fatal("handler was built without a scraper or fetcher")
+	}
+}
+
+// The job is where every image is named and vetted, before anything is
+// fetched: an address inside the network is refused here, the same
+// photograph at two sizes is one image, and each gets the object name it
+// will be stored under so a retried message never makes a second copy.
+func TestNewImportJobNamesAndVetsEveryImage(t *testing.T) {
+	app := fiber.New()
+	c := app.AcquireCtx(&fasthttp.RequestCtx{})
+	defer app.ReleaseCtx(c)
+
+	job := newImportJob(importImagesRequest{
+		Name:      "Noise Pulse 2 Max",
+		SourceURL: "https://www.amazon.in/dp/B0B6BPTFT5",
+		Images: []string{
+			"https://m.media-amazon.com/images/I/71abc._AC_SX679_.jpg",
+			"https://m.media-amazon.com/images/I/71abc._AC_SL1500_.jpg", // same photo, other size
+			"http://169.254.169.254/latest/meta-data/",
+			"https://m.media-amazon.com/images/I/82def.jpg",
+		},
+	}, c)
+
+	if len(job.Images) != 3 {
+		t.Fatalf("got %d images, want 3 (one duplicate folded): %+v", len(job.Images), job.Images)
+	}
+	if job.Status != models.ImportJobRunning {
+		t.Errorf("status = %q, want running", job.Status)
+	}
+
+	seen := map[string]bool{}
+	for i, image := range job.Images {
+		if image.ObjectName == "" || seen[image.ObjectName] {
+			t.Errorf("image %d has no distinct object name: %q", i, image.ObjectName)
+		}
+		seen[image.ObjectName] = true
+		if !strings.Contains(image.ObjectName, "noise-pulse-2-max") {
+			t.Errorf("object name %q does not carry the product's name", image.ObjectName)
+		}
+	}
+
+	metadata := job.Images[1]
+	if metadata.Status != models.ImportImageFailed || metadata.Reason == "" {
+		t.Errorf("the metadata address was not refused up front: %+v", metadata)
+	}
+	if job.Images[0].Status != models.ImportImagePending || job.Images[2].Status != models.ImportImagePending {
+		t.Errorf("ordinary images should be pending: %+v", job.Images)
+	}
+
+	stored, failed, pending := job.Counts()
+	if stored != 0 || failed != 1 || pending != 2 {
+		t.Errorf("counts = %d/%d/%d, want 0 stored, 1 failed, 2 pending", stored, failed, pending)
+	}
+}
+
+// The view is what the panel polls: its counts and its URL list must agree
+// with the images they summarise, and a job with nothing pending reads as
+// complete once the reader marks it so.
+func TestJobViewSummarisesTheImages(t *testing.T) {
+	job := &models.ImageImportJob{
+		Status: models.ImportJobRunning,
+		Images: []models.ImportJobImage{
+			{SourceURL: "a", Status: models.ImportImageStored, URL: "https://bucket/a.jpg"},
+			{SourceURL: "b", Status: models.ImportImageFailed, Reason: "too small"},
+			{SourceURL: "c", Status: models.ImportImagePending},
+		},
+	}
+	view := jobView(job)
+	if view["total"] != 3 || view["stored"] != 1 || view["failed"] != 1 || view["pending"] != 1 {
+		t.Errorf("view counts = %v", view)
+	}
+	urls, _ := view["urls"].([]string)
+	if len(urls) != 1 || urls[0] != "https://bucket/a.jpg" {
+		t.Errorf("urls = %v, want only the stored one", urls)
 	}
 }

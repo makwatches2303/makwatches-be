@@ -182,6 +182,22 @@ func ImportImages(ctx context.Context, fetcher *Fetcher, uploader Uploader, urls
 	return imported, rejected
 }
 
+// StoreImage fetches one photograph, checks it, and stores it with its
+// thumbnail under basename plus the extension its bytes call for.
+//
+// Exported because the same step runs in two places: inline, when there is no
+// queue (local development), and in the worker, one message per image.
+func StoreImage(ctx context.Context, fetcher *Fetcher, uploader Uploader, raw, referer, basename string) (*ImportedImage, error) {
+	return importOne(ctx, fetcher, uploader, raw, referer, basename)
+}
+
+// ImageIdentity is imageIdentity for callers outside the package that need to
+// deduplicate the same photograph addressed at several sizes.
+func ImageIdentity(raw string) string { return imageIdentity(raw) }
+
+// Slugify is slugify for callers that name objects after a product.
+func Slugify(s string) string { return slugify(s) }
+
 func importOne(ctx context.Context, fetcher *Fetcher, uploader Uploader, raw, referer, basename string) (*ImportedImage, error) {
 	page, err := fetcher.GetBinary(ctx, raw, maxImageBytes, referer)
 	if err != nil {

@@ -85,13 +85,17 @@ func (i *Index) Has(ctx context.Context, object string) bool {
 	i.ensureFresh(ctx)
 
 	i.mu.RLock()
-	defer i.mu.RUnlock()
+	available := i.available
+	_, known := i.names[object]
+	i.mu.RUnlock()
 
-	if !i.available {
+	if !available || known {
 		return true
 	}
-	_, ok := i.names[object]
-	return ok
+	// Not in the listing is not the same as not in the bucket: the listing
+	// can be ten minutes old, and the worker may have stored this object a
+	// second ago. Ask, once, before hiding an image. See probe.go.
+	return i.probe(ctx, object)
 }
 
 // Note records objects this process has just written to the bucket, so they

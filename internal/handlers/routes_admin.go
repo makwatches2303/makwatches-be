@@ -35,6 +35,9 @@ func registerAdminProductImportRoutes(d *routeDeps) {
 	products := d.admin.Group("/products")
 	products.Post("/scrape", rateLimit(20, time.Minute), d.productImport.ScrapeProduct)
 	products.Post("/import-images", rateLimit(20, time.Minute), d.productImport.ImportImages)
+	// Polled by the panel while the worker stores a job's images; not rate
+	// limited, since a poll a second for a minute is the intended use.
+	products.Get("/import-jobs/:id", d.productImport.GetImportJob)
 }
 
 // registerAdminSecurityRoutes wires the admin dashboard's Security tab:

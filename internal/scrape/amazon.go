@@ -46,6 +46,22 @@ func extractAmazon(doc *html.Node, base *url.URL) *Draft {
 	draft.Bullets = amazonBullets(doc)
 	draft.Specs = amazonSpecs(doc)
 
+	// Some listings jam their specification into the last feature bullet as
+	// "Model: X; Item Weight: 45g; Target Gender: Unisex". Left alone, that
+	// lands in the description as a run of semicolons and the fields it names
+	// stay empty. Such a bullet is specification, not copy, so it becomes
+	// spec rows and leaves the bullets.
+	var bullets []string
+	for _, bullet := range draft.Bullets {
+		if rows := specRowsFromBullet(bullet); len(rows) >= 2 {
+			draft.Specs = append(draft.Specs, rows...)
+			continue
+		}
+		bullets = append(bullets, bullet)
+	}
+	draft.Bullets = bullets
+	draft.Specs = dropNoiseSpecs(draft.Specs)
+
 	draft.VariantDimension, draft.Variants, _ = amazonVariants(doc, base)
 	draft.Images = amazonImages(doc, base, draft.Variants)
 
@@ -198,7 +214,16 @@ func amazonSpecs(doc *html.Node) []Spec {
 		specs = append(specs, specsFromTable(overview)...)
 	}
 
-	// 4: the "Product details" bullet list, where label and value are
+	// 4: every key/value details table, wherever the layout put it. Amazon
+	// splits the specification into several small tables under collapsible
+	// sections whose ids vary by template, but each table carries the same
+	// class -- and the rows this catalogue filters on (band material, display
+	// type, screen size) were all in tables no fixed id reached.
+	for _, table := range elementsByClass(doc, "prodDetTable") {
+		specs = append(specs, specsFromTable(table)...)
+	}
+
+	// 5: the "Product details" bullet list, where label and value are
 	// separated by a colon inside one list item.
 	if bullets := elementByID(doc, "detailBullets_feature_div"); bullets != nil {
 		for _, item := range elementsByTag(bullets, "li") {
@@ -217,6 +242,31 @@ func amazonSpecs(doc *html.Node) []Spec {
 	}
 
 	return dropNoiseSpecs(specs)
+}
+
+// specRowsFromBullet reads "Label: value; Label: value" out of one bullet.
+//
+// Only fragments whose label looks like a specification label are kept, so a
+// sentence that happens to contain a colon ("Note: charge fully before first
+// use") is not turned into a row named "Note".
+func specRowsFromBullet(bullet string) []Spec {
+	var rows []Spec
+	for _, fragment := range strings.Split(bullet, ";") {
+		idx := strings.Index(fragment, ":")
+		if idx <= 0 {
+			continue
+		}
+		label := collapseSpace(fragment[:idx])
+		value := collapseSpace(fragment[idx+1:])
+		// A specification value is a word or a number. A whole sentence after
+		// the colon ("Tru Sync: Now connect with the world in a smart way…")
+		// is a feature blurb whose heading happens to end in a colon.
+		if value == "" || len(value) > 60 || !looksLikeSpecLabel(label) {
+			continue
+		}
+		rows = append(rows, Spec{Label: label, Value: value})
+	}
+	return rows
 }
 
 // specsFromTable reads label/value pairs out of a two-column table, accepting
@@ -254,7 +304,9 @@ func dropNoiseSpecs(specs []Spec) []Spec {
 		"packer", "importer", "country of origin", "feedback", "warranty",
 		"try on", "product sold", "quality score", "speed score", "note",
 		"delivery", "offer", "emi", "exchange", "seller", "rating", "in stock",
-		"view similar", "highlights", "price",
+		"view similar", "highlights", "price", "manufacturer", "gtin",
+		"global trade", "contact", "unit count", "compatible phone",
+		"compatible device", "supported application", "box contents",
 	}
 	out := make([]Spec, 0, len(specs))
 	for _, spec := range specs {

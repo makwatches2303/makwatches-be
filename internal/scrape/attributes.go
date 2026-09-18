@@ -25,14 +25,24 @@ type Attributes struct {
 // specAliases maps our field to the labels sources actually use, most
 // specific first.
 var specAliases = map[string][]string{
-	"dialColor":     {"dial colour", "dial color", "dial", "case colour", "case color"},
-	"dialShape":     {"dial shape", "case shape", "shape"},
-	"dialType":      {"display type", "dial type", "display", "movement type", "type"},
-	"dialThickness": {"case thickness", "dial thickness", "thickness", "case diameter", "dial diameter", "diameter"},
-	"strapColor":    {"strap colour", "strap color", "band colour", "band color", "bracelet colour"},
-	"strapMaterial": {"strap material", "band material", "bracelet material", "strap type", "material"},
-	"style":         {"style", "occasion", "watch style", "ideal for"},
+	"dialColor":     {"dial colour", "dial color", "dial", "case colour", "case color", "colour", "color"},
+	"dialShape":     {"dial shape", "case shape", "shape", "screen shape"},
+	"dialType":      {"display type", "dial type", "display", "screen type", "movement type", "watch movement", "movement", "type"},
+	"dialThickness": {"case thickness", "dial thickness", "thickness", "case diameter", "dial diameter", "screen size", "diameter"},
+	"strapColor":    {"strap colour", "strap color", "band colour", "band color", "bracelet colour", "bracelet color"},
+	"strapMaterial": {"strap material", "band material type", "band material", "bracelet material", "strap type", "band type", "material type", "material"},
+	"style":         {"watch style", "style", "occasion", "ideal for"},
 }
+
+// identifierLabels are labels that name a product code rather than describe
+// it. "Style Name" and "Style Code" contain "style" but are model names, and
+// filling the Style filter with "ColorFit Pulse 2 Max" is worse than leaving
+// it blank.
+var identifierLabels = []string{"style name", "style code", "model name", "model number", "reference"}
+
+// modelAliases are the labels a source uses for the manufacturer's own model
+// code, which is the most reliable way to tell two watches apart.
+var modelAliases = []string{"item model number", "model number", "model name", "model", "style code", "reference number"}
 
 // guessAttributes reads the draft's specs and title for the attributes this
 // catalogue filters on.
@@ -56,7 +66,7 @@ func guessAttributes(d *Draft) *Attributes {
 		}
 		for _, alias := range specAliases[field] {
 			for label, value := range lookup {
-				if strings.Contains(label, alias) {
+				if strings.Contains(label, alias) && !isIdentifierLabel(label) {
 					return value
 				}
 			}
@@ -72,6 +82,15 @@ func guessAttributes(d *Draft) *Attributes {
 		StrapColor:    collapseSpace(find("strapColor")),
 		StrapMaterial: collapseSpace(find("strapMaterial")),
 		Style:         collapseSpace(find("style")),
+	}
+
+	if d.ModelNo == "" {
+		for _, alias := range modelAliases {
+			if value := collapseSpace(lookup[alias]); value != "" && len(value) < 60 {
+				d.ModelNo = value
+				break
+			}
+		}
 	}
 
 	attrs.Gender = guessGender(d, lookup)
@@ -96,12 +115,21 @@ func guessAttributes(d *Draft) *Attributes {
 	return attrs
 }
 
+func isIdentifierLabel(label string) bool {
+	for _, id := range identifierLabels {
+		if strings.Contains(label, id) {
+			return true
+		}
+	}
+	return false
+}
+
 // guessGender reads who the watch is sold to, from the spec table first and
 // the product name second.
 func guessGender(d *Draft, lookup map[string]string) string {
 	candidates := []string{
-		lookup["gender"], lookup["department"], lookup["ideal for"],
-		lookup["suitable for"], d.Name, d.Category,
+		lookup["target gender"], lookup["gender"], lookup["department"],
+		lookup["ideal for"], lookup["suitable for"], d.Name, d.Category,
 	}
 	for _, candidate := range candidates {
 		switch {

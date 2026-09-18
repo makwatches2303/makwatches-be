@@ -13,6 +13,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	shippingsetup "github.com/shivam-mishra-20/mak-watches-be/internal/shipping/setup"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
@@ -86,6 +87,14 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 	fb := firebase.NewProvider(cfg.FirebaseCredentialsJSON, cfg.FirebaseBucketName)
 	media := mediaindex.New(fb, mediaindex.DefaultTTL)
 
+	// The queue that hands slow work to the worker function. Nil outside
+	// Lambda, where there is no worker and the handlers do the work inline.
+	jobQueue, err := queue.New(cfg.SQSQueueURL)
+	if err != nil {
+		log.Printf("[ROUTES] queue unavailable, imports will run inline: %v", err)
+		jobQueue = nil
+	}
+
 	// One shipping service for the process, with both carriers registered.
 	// Every shipping caller shares it, so there is a single Shiprocket token
 	// cache and a single Delhivery client rather than one per handler.
@@ -130,7 +139,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		shipHooks:     NewShippingWebhookHandler(shippingSvc),
 		account:       NewAccountHandler(db, cfg),
 		upload:        NewUploadHandler(cfg, fb, media),
-		productImport: NewProductImportHandler(cfg, fb, media),
+		productImport: NewProductImportHandler(cfg, db, fb, media, jobQueue),
 		settings:      NewSettingsHandler(db.MongoDB, fb),
 		catalogV1:     NewCatalogV1Handler(db, cfg, media),
 		storefront:    NewStorefrontHandler(db, cfg),

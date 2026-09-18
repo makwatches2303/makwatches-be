@@ -125,7 +125,7 @@ cat > "$TMP_DIR/api-policy.json" <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
-    {"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": "$QUEUE_ARN"},
+    {"Effect": "Allow", "Action": ["sqs:SendMessage","sqs:SendMessageBatch"], "Resource": "$QUEUE_ARN"},
     {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "$SECRET_ARN"}
   ]
 }
@@ -139,7 +139,8 @@ cat > "$TMP_DIR/worker-policy.json" <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
-    {"Effect": "Allow", "Action": ["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"], "Resource": "$QUEUE_ARN"}
+    {"Effect": "Allow", "Action": ["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"], "Resource": "$QUEUE_ARN"},
+    {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "$SECRET_ARN"}
   ]
 }
 EOF
@@ -161,8 +162,9 @@ python3 "$SCRIPT_DIR/render_env.py" "$ENV_FILE" "$TMP_DIR/api-env.json" \
   --set "FIREBASE_SECRET_ARN=$SECRET_ARN"
 
 python3 "$SCRIPT_DIR/render_env.py" "$ENV_FILE" "$TMP_DIR/worker-env.json" \
-  --include MONGO_URI,DATABASE_NAME,JWT_SECRET,DELHIVERY_API_TOKEN,DELHIVERY_BASE_URL,DELHIVERY_PICKUP_LOCATION,DELHIVERY_SELLER_NAME,DELHIVERY_SELLER_PHONE,DELHIVERY_SELLER_ADDRESS,DELHIVERY_SELLER_CITY,DELHIVERY_SELLER_STATE,DELHIVERY_SELLER_PINCODE,DELHIVERY_RETURN_ADDRESS,DELHIVERY_RETURN_CITY,DELHIVERY_RETURN_STATE,DELHIVERY_RETURN_PINCODE,DELHIVERY_RETURN_PHONE \
-  --set ENVIRONMENT=production
+  --include MONGO_URI,DATABASE_NAME,JWT_SECRET,FIREBASE_BUCKET_NAME,DELHIVERY_API_TOKEN,DELHIVERY_BASE_URL,DELHIVERY_PICKUP_LOCATION,DELHIVERY_SELLER_NAME,DELHIVERY_SELLER_PHONE,DELHIVERY_SELLER_ADDRESS,DELHIVERY_SELLER_CITY,DELHIVERY_SELLER_STATE,DELHIVERY_SELLER_PINCODE,DELHIVERY_RETURN_ADDRESS,DELHIVERY_RETURN_CITY,DELHIVERY_RETURN_STATE,DELHIVERY_RETURN_PINCODE,DELHIVERY_RETURN_PHONE \
+  --set ENVIRONMENT=production \
+  --set "FIREBASE_SECRET_ARN=$SECRET_ARN"
 
 ########################################
 # 5. Lambda functions (create-or-update)
@@ -202,7 +204,10 @@ deploy_function() {
 # so resizing was slow as well as tight. Roughly cost-neutral: billing is per
 # GB-millisecond, and the work finishes in proportionately less time.
 deploy_function "$API_FUNCTION_NAME" "$BUILD_DIR/makwatches-api.zip" "$API_ROLE_ARN" "$TMP_DIR/api-env.json" 29 1024
-deploy_function "$WORKER_FUNCTION_NAME" "$BUILD_DIR/makwatches-shipment-worker.zip" "$WORKER_ROLE_ARN" "$TMP_DIR/worker-env.json" 30 256
+# 1024 MB, raised from 256: the worker now decodes and resizes imported
+# photographs, and a 1500px JPEG is a 9 MB pixel buffer the moment it is
+# decoded. Memory also buys CPU on Lambda.
+deploy_function "$WORKER_FUNCTION_NAME" "$BUILD_DIR/makwatches-shipment-worker.zip" "$WORKER_ROLE_ARN" "$TMP_DIR/worker-env.json" 60 1024
 
 ########################################
 # 6. Event source mapping: queue -> worker

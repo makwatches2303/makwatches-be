@@ -48,6 +48,9 @@ func (db *DBClient) Collections() struct {
 	Subscribers       *mongo.Collection
 	AbandonedCarts    *mongo.Collection
 	Coupons           *mongo.Collection
+	// ImageImportJobs tracks photographs being copied into our own storage by
+	// the worker, one job per approved import.
+	ImageImportJobs *mongo.Collection
 } {
 	return struct {
 		Users             *mongo.Collection
@@ -69,6 +72,7 @@ func (db *DBClient) Collections() struct {
 		Subscribers       *mongo.Collection
 		AbandonedCarts    *mongo.Collection
 		Coupons           *mongo.Collection
+		ImageImportJobs   *mongo.Collection
 	}{
 		Users:             db.MongoDB.Collection("users"),
 		Products:          db.MongoDB.Collection("products"),
@@ -89,6 +93,7 @@ func (db *DBClient) Collections() struct {
 		Subscribers:       db.MongoDB.Collection("subscribers"),
 		AbandonedCarts:    db.MongoDB.Collection("abandoned_carts"),
 		Coupons:           db.MongoDB.Collection("coupons"),
+		ImageImportJobs:   db.MongoDB.Collection("image_import_jobs"),
 	}
 }
 
