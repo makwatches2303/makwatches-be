@@ -139,6 +139,10 @@ type recordingUploader struct {
 	names []string
 }
 
+func (u *recordingUploader) UploadObject(ctx context.Context, file io.Reader, objectName string) (string, error) {
+	return u.UploadFile(ctx, file, objectName)
+}
+
 func (u *recordingUploader) UploadFile(ctx context.Context, file io.Reader, filename string) (string, error) {
 	body, err := io.ReadAll(file)
 	if err != nil {

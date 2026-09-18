@@ -17,8 +17,13 @@ type Product struct {
 	MainCategory string             `json:"mainCategory,omitempty" bson:"main_category,omitempty"`
 	Subcategory  string             `json:"subcategory,omitempty" bson:"subcategory,omitempty"`
 	ImageURL     string             `json:"imageUrl" bson:"image_url"` // Main image (legacy support)
-	Images       []string           `json:"images" bson:"images"`      // Multiple S3 image URLs
-	Stock        int                `json:"stock" bson:"stock"`
+	// Thumbnail is the small rendition of ImageURL when one has been stored,
+	// and ImageURL itself otherwise. Computed on read and never persisted
+	// (bson:"-"): a grid drawing a 200px square must not download a 1500px
+	// photograph, but the product's own gallery still points at the originals.
+	Thumbnail string   `json:"thumbnail,omitempty" bson:"-"`
+	Images    []string `json:"images" bson:"images"` // Multiple S3 image URLs
+	Stock     int      `json:"stock" bson:"stock"`
 	// Optional filterable attributes (for dynamic filters)
 	Gender        string `json:"gender,omitempty" bson:"gender,omitempty"`
 	DialColor     string `json:"dialColor,omitempty" bson:"dial_color,omitempty"`

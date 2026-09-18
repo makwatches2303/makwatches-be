@@ -17,6 +17,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/config"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imageproc"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/imageurl"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
@@ -73,6 +74,24 @@ func (h *ProductHandler) resolveProductImages(ctx context.Context, p *models.Pro
 	if p.ImageURL == "" && len(p.Images) > 0 {
 		p.ImageURL = p.Images[0]
 	}
+	p.Thumbnail = h.thumbnailFor(ctx, p.ImageURL)
+}
+
+// thumbnailFor returns the small rendition of an image when one exists.
+//
+// Falls back to the image itself, which is what every product uploaded before
+// renditions existed has. The inventory answers this without a network call,
+// so asking per product costs nothing.
+func (h *ProductHandler) thumbnailFor(ctx context.Context, imageURL string) string {
+	if imageURL == "" {
+		return ""
+	}
+	object := mediaindex.ObjectName(imageURL)
+	thumb := imageproc.RenditionName(object, fmt.Sprintf("-%dw", imageproc.ThumbWidth), "image/jpeg")
+	if thumb == object || !h.Media.Has(ctx, thumb) {
+		return imageURL
+	}
+	return strings.Replace(imageURL, object, thumb, 1)
 }
 
 // presentImages drops references whose object is absent from the bucket.
@@ -529,6 +548,9 @@ func (h *ProductHandler) GetPublicProducts(c *fiber.Ctx) error {
 		Brand        string             `json:"brand,omitempty"`
 		MainCategory string             `json:"mainCategory,omitempty"`
 		Subcategory  string             `json:"subcategory,omitempty"`
+		// Thumbnail is the small rendition of the first image, so a grid does
+		// not download full-size photographs to fill small squares.
+		Thumbnail string `bson:"-" json:"thumbnail,omitempty"`
 		// discount fields
 		DiscountPercentage *float64   `bson:"discount_percentage,omitempty" json:"discountPercentage,omitempty"`
 		DiscountAmount     *float64   `bson:"discount_amount,omitempty" json:"discountAmount,omitempty"`
@@ -544,6 +566,9 @@ func (h *ProductHandler) GetPublicProducts(c *fiber.Ctx) error {
 	for i := range items {
 		items[i].Images = h.presentImages(ctx,
 			imageurl.ResolveAll(items[i].Images, h.Config.FirebaseBucketName))
+		if len(items[i].Images) > 0 {
+			items[i].Thumbnail = h.thumbnailFor(ctx, items[i].Images[0])
+		}
 	}
 
 	return c.JSON(fiber.Map{

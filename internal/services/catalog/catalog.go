@@ -19,6 +19,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/imageproc"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/imageurl"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
@@ -381,7 +382,7 @@ func toVariantSummary(p models.Product) VariantSummary {
 		Slug:         p.Slug,
 		Name:         p.Name,
 		VariantLabel: p.VariantLabel,
-		Thumbnail:    p.ImageURL,
+		Thumbnail:    p.Thumbnail,
 		InStock:      p.Stock > 0,
 	}
 }
@@ -519,6 +520,22 @@ func (s *Service) resolveMedia(ctx context.Context, p *models.Product) {
 	if p.ImageURL == "" && len(p.Images) > 0 {
 		p.ImageURL = p.Images[0]
 	}
+	p.Thumbnail = s.thumbnailFor(ctx, p.ImageURL)
+}
+
+// thumbnailFor returns the small rendition of an image when one has been
+// stored, and the image itself otherwise -- which is every product uploaded
+// before renditions existed.
+func (s *Service) thumbnailFor(ctx context.Context, imageURL string) string {
+	if imageURL == "" {
+		return ""
+	}
+	object := mediaindex.ObjectName(imageURL)
+	thumb := imageproc.RenditionName(object, fmt.Sprintf("-%dw", imageproc.ThumbWidth), "image/jpeg")
+	if thumb == object || !s.mediaPresent(ctx, thumb) {
+		return imageURL
+	}
+	return strings.Replace(imageURL, object, thumb, 1)
 }
 
 // mediaPresent reports whether a resolved reference points at an object that
