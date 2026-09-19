@@ -83,6 +83,16 @@ type Config struct {
 	ShippingProvider string
 	SellerGSTIN      string
 
+	// ShippingAutoDispatch restores the old behaviour of handing a freshly
+	// placed order straight to a carrier.
+	//
+	// Default false. An order is now created in MAK Watches, shown to an admin
+	// with the customer's chosen delivery option, and only booked once that
+	// admin has approved it and named the carrier -- so a parcel is never
+	// created for an order nobody has looked at. Set this to true only to go
+	// back to dispatching automatically at checkout.
+	ShippingAutoDispatch bool
+
 	// Package defaults, centralized so the two carrier adapters cannot drift.
 	PackageDefaultWeightGrams float64
 	PackageDefaultLengthCm    float64
@@ -91,6 +101,17 @@ type Config struct {
 
 	// SQS queue URL for the async Delhivery shipment-creation flow.
 	SQSQueueURL string
+
+	// StorefrontRevalidateURL is the storefront's on-demand cache purge
+	// endpoint (its /api/revalidate route). When set together with the secret,
+	// the API tells the storefront which cache tags went stale immediately
+	// after an admin saves content, instead of leaving it to serve the
+	// previous copy until its own TTL lapses. Empty disables the call.
+	StorefrontRevalidateURL string
+	// StorefrontRevalidateSecret is the shared secret the storefront checks on
+	// that endpoint. Without it the endpoint is an unauthenticated purge
+	// lever, so the notifier refuses to run.
+	StorefrontRevalidateSecret string
 
 	// FlowSell WhatsApp Integration
 	FlowSellAPIKey          string
@@ -179,7 +200,9 @@ func LoadConfig() (*Config, error) {
 
 		ShippingProvider:         getEnv("SHIPPING_PROVIDER", "all"),
 		RequireShippingSelection: getEnv("REQUIRE_SHIPPING_SELECTION", "false") == "true",
-		SellerGSTIN:              getEnv("SELLER_GSTIN", ""),
+		// Opt-in, and off by default: dispatch waits for an admin.
+		ShippingAutoDispatch: getEnv("SHIPPING_AUTO_DISPATCH", "false") == "true",
+		SellerGSTIN:          getEnv("SELLER_GSTIN", ""),
 
 		PackageDefaultWeightGrams: getEnvAsFloat("PACKAGE_DEFAULT_WEIGHT_GRAMS", 500),
 		PackageDefaultLengthCm:    getEnvAsFloat("PACKAGE_DEFAULT_LENGTH_CM", 15),
@@ -187,6 +210,12 @@ func LoadConfig() (*Config, error) {
 		PackageDefaultHeightCm:    getEnvAsFloat("PACKAGE_DEFAULT_HEIGHT_CM", 8),
 
 		SQSQueueURL: getEnv("SQS_QUEUE_URL", ""),
+
+		// Storefront cache invalidation. Unset in an environment that has no
+		// storefront to talk to (local API work, the worker), which simply
+		// leaves the push disabled.
+		StorefrontRevalidateURL:    getEnv("STOREFRONT_REVALIDATE_URL", ""),
+		StorefrontRevalidateSecret: getEnv("STOREFRONT_REVALIDATE_SECRET", ""),
 
 		// FlowSell WhatsApp Integration
 		FlowSellAPIKey:          getEnv("FLOWSELL_API_KEY", "fsc_WR-3fFNU_hvOhqKjS8dVjxzKtQB02VPV"),

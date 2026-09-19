@@ -13,6 +13,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/revalidate"
 )
 
 // StorefrontHandler serves the admin-managed storefront presentation layer.
@@ -23,11 +24,26 @@ import (
 type StorefrontHandler struct {
 	DB     *database.DBClient
 	Config *config.Config
+	// Revalidator pushes a cache purge to the storefront after a write, so an
+	// edit is visible on the live site immediately rather than when the
+	// storefront's own cache expires. Nil when unconfigured, and every call on
+	// it is then a no-op.
+	Revalidator *revalidate.Notifier
 }
 
 // NewStorefrontHandler builds the storefront content handler.
 func NewStorefrontHandler(db *database.DBClient, cfg *config.Config) *StorefrontHandler {
 	return &StorefrontHandler{DB: db, Config: cfg}
+}
+
+// WithRevalidator attaches the storefront cache notifier.
+//
+// Separate from the constructor so every existing call site -- including the
+// route tests, which build handlers without any network dependency -- keeps
+// compiling and behaving exactly as before.
+func (h *StorefrontHandler) WithRevalidator(n *revalidate.Notifier) *StorefrontHandler {
+	h.Revalidator = n
+	return h
 }
 
 const storefrontCacheKey = "storefront:content"
@@ -171,6 +187,7 @@ func (h *StorefrontHandler) UpdateStorefront(c *fiber.Ctx) error {
 	update := bson.M{"$set": bson.M{
 		"navigation":     incoming.Navigation,
 		"category_tiles": incoming.CategoryTiles,
+		"listings":       incoming.Listings,
 		"hero":           incoming.Hero,
 		"trust":          incoming.Trust,
 		"stats":          incoming.Stats,
@@ -194,6 +211,13 @@ func (h *StorefrontHandler) UpdateStorefront(c *fiber.Ctx) error {
 	// Drop the cache so the change is visible on the next storefront request
 	// rather than after the TTL.
 	h.DB.CacheDel(ctx, storefrontCacheKey)
+
+	// ...and tell the storefront to drop its own copy. Clearing only the line
+	// above leaves the rendered site serving the previous heading until Next's
+	// data and route caches expire, which is what made saved edits look like
+	// they had not been saved. Fire and forget: the write is already committed
+	// and an unreachable storefront must not fail this response.
+	h.Revalidator.Invalidate(revalidate.TagStorefront)
 
 	saved, err := h.load(ctx)
 	if err != nil {
@@ -222,6 +246,7 @@ func (h *StorefrontHandler) ResetStorefront(c *fiber.Ctx) error {
 	update := bson.M{"$set": bson.M{
 		"navigation":     defaults.Navigation,
 		"category_tiles": defaults.CategoryTiles,
+		"listings":       defaults.Listings,
 		"hero":           defaults.Hero,
 		"trust":          defaults.Trust,
 		"stats":          defaults.Stats,
@@ -241,6 +266,7 @@ func (h *StorefrontHandler) ResetStorefront(c *fiber.Ctx) error {
 	}
 
 	h.DB.CacheDel(ctx, storefrontCacheKey)
+	h.Revalidator.Invalidate(revalidate.TagStorefront)
 
 	return c.JSON(fiber.Map{
 		"success":  true,

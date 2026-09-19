@@ -97,6 +97,93 @@ func (s *ShippingInfo) HasShipment() bool {
 	return s.AWB() != "" || s.ProviderShipmentID != "" || s.ProviderOrderID != ""
 }
 
+// Dispatch approval states.
+//
+// An order is created in MAK Watches first and only handed to a carrier once a
+// member of staff has looked at it and said so. These are the two states that
+// decision can be in; anything else -- cancelled, refunded, shipped -- is the
+// order's own Status and is not duplicated here.
+const (
+	// DispatchPending is an order waiting for a human to review it. It is the
+	// state every new order starts in.
+	DispatchPending = "pending"
+	// DispatchApproved means an admin has reviewed the order and nominated the
+	// carrier it should be dispatched with.
+	DispatchApproved = "approved"
+)
+
+// OrderApproval records the admin's explicit go-ahead to dispatch an order.
+//
+// # Why this is its own record rather than another order status
+//
+// Approval is a decision *about* fulfillment, not a stage of it. Folding it
+// into Order.Status would collide with the carrier-driven states that already
+// live there (a webhook moving an order to "shipped" would erase who approved
+// it), and it has to survive every later status change so support can still
+// answer "who sent this to Shiprocket, and when".
+//
+// Provider is the carrier the admin chose for dispatch. It is deliberately
+// separate from the customer's own selection at checkout
+// (Order.ShippingOption): the customer picks a delivery speed and price, the
+// shop picks who actually carries the parcel, and the admin must be able to
+// see the first while deciding the second.
+//
+// Every field is optional on the wire, so orders written before this existed
+// decode with a nil Approval and are treated as pending -- except where a
+// parcel was already booked, which is itself evidence the dispatch was
+// authorised. See Order.DispatchApproved.
+type OrderApproval struct {
+	// Status is DispatchPending or DispatchApproved.
+	Status string `json:"status" bson:"status"`
+	// Provider is the carrier chosen for dispatch: "shiprocket" or "delhivery".
+	Provider string `json:"provider,omitempty" bson:"provider,omitempty"`
+	// ApprovedBy is the admin's user id. Hex string rather than ObjectID so a
+	// record stays readable if the account is later removed.
+	ApprovedBy string    `json:"approvedBy,omitempty" bson:"approved_by,omitempty"`
+	ApprovedAt time.Time `json:"approvedAt,omitempty" bson:"approved_at,omitempty"`
+	// Note is free text the admin may leave with the decision.
+	Note string `json:"note,omitempty" bson:"note,omitempty"`
+}
+
+// ApprovalState reports the order's dispatch-approval state.
+//
+// A missing record reads as DispatchPending: every order placed before
+// approval existed is unreviewed by definition, and defaulting the other way
+// would hand a carrier a backlog of orders nobody looked at.
+func (o *Order) ApprovalState() string {
+	if o == nil || o.Approval == nil || o.Approval.Status == "" {
+		return DispatchPending
+	}
+	return o.Approval.Status
+}
+
+// DispatchApproved reports whether this order may be handed to a carrier.
+//
+// An order that already carries a booked shipment counts as approved whatever
+// its Approval record says. That is not a loophole -- it is what keeps every
+// existing order fully operable: a parcel booked before this gate existed must
+// still be trackable, re-AWB-able, labellable and cancellable, and each of
+// those paths runs through the same authorization.
+func (o *Order) DispatchApproved() bool {
+	if o == nil {
+		return false
+	}
+	if o.ApprovalState() == DispatchApproved {
+		return true
+	}
+	return o.ShippingInfo.HasShipment()
+}
+
+// ApprovedProvider returns the carrier an admin nominated, or "" if none was
+// recorded. Callers fall back to the customer's selection and then to the
+// configured primary, exactly as they did before approval existed.
+func (o *Order) ApprovedProvider() string {
+	if o == nil || o.Approval == nil {
+		return ""
+	}
+	return o.Approval.Provider
+}
+
 // OrderItem represents an item in an order
 type OrderItem struct {
 	ProductID   primitive.ObjectID `json:"productId" bson:"product_id"`
@@ -143,6 +230,11 @@ type Order struct {
 	CustomerPhone   string             `json:"customerPhone,omitempty" bson:"customer_phone,omitempty"` // Customer contact for delivery
 	CustomerEmail   string             `json:"customerEmail,omitempty" bson:"customer_email,omitempty"` // Customer email
 	CustomerName    string             `json:"customerName,omitempty" bson:"customer_name,omitempty"`   // Customer name for delivery
+
+	// Approval is the admin's explicit go-ahead to dispatch, and the carrier
+	// they chose. Nil on orders placed before this existed, which read as
+	// pending. See OrderApproval.
+	Approval *OrderApproval `json:"approval,omitempty" bson:"approval,omitempty"`
 
 	// Set when a delivery address is corrected after the order was placed
 	// (PATCH /orders/:id/address). Kept so support can tell an address the

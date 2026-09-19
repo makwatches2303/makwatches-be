@@ -82,6 +82,21 @@ type RateChoice struct {
 	EstimatedDeliveryDays int     `json:"estimatedDeliveryDays,omitempty" bson:"estimated_delivery_days,omitempty"`
 	ETD                   string  `json:"etd,omitempty" bson:"etd,omitempty"`
 	CODAvailable          bool    `json:"codAvailable,omitempty" bson:"cod_available,omitempty"`
+
+	// DeliveryTier is the delivery *speed* the customer chose, in the terms
+	// they were shown it: express, standard, economy or flexible. Derived
+	// server-side from the signed quote's day estimate (see DeliveryTierFor)
+	// and stored so the order keeps meaning what the shopper was offered, even
+	// if the thresholds are retuned later.
+	//
+	// Deliberately not a carrier fact. Provider and ProviderCourierID above
+	// stay the internal record of who was quoted; which carrier actually
+	// carries the parcel is a separate decision an admin makes at approval
+	// time, and this field never constrains it.
+	//
+	// Absent on orders placed before this existed; DeliveryTierOf derives it
+	// from EstimatedDeliveryDays for those.
+	DeliveryTier string `json:"deliveryTier,omitempty" bson:"delivery_tier,omitempty"`
 }
 
 // AWB returns the carrier tracking number for a shipment, tolerating the

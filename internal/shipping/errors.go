@@ -31,6 +31,9 @@ const (
 	CodeShipmentNotFound       ErrorCode = "SHIPMENT_NOT_FOUND"
 	CodeUnsupported            ErrorCode = "OPERATION_UNSUPPORTED"
 	CodeAlreadyExists          ErrorCode = "SHIPMENT_ALREADY_EXISTS"
+	// CodeApprovalRequired is returned when something tries to hand an order to
+	// a carrier before an admin has reviewed and approved it for dispatch.
+	CodeApprovalRequired ErrorCode = "DISPATCH_NOT_APPROVED"
 )
 
 // customerMessage is what a customer or admin browser is allowed to read for a
@@ -51,6 +54,7 @@ var customerMessage = map[ErrorCode]string{
 	CodeShipmentNotFound:       "No shipment was found for this order.",
 	CodeUnsupported:            "This shipping operation is not supported by the current carrier.",
 	CodeAlreadyExists:          "A shipment already exists for this order.",
+	CodeApprovalRequired:       "This order has not been approved for dispatch yet.",
 }
 
 // Error is a shipping failure split into a public half and a private half.
@@ -91,6 +95,10 @@ func (e *Error) HTTPStatus() int {
 	case CodeShipmentNotFound:
 		return http.StatusNotFound
 	case CodeAlreadyExists:
+		return http.StatusConflict
+	case CodeApprovalRequired:
+		// Conflict, not forbidden: the caller is allowed to do this, the order
+		// is simply not in a state where it can be done yet.
 		return http.StatusConflict
 	case CodeUnsupported:
 		return http.StatusNotImplemented

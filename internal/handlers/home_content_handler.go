@@ -16,6 +16,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/database"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/imageurl"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/models"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/revalidate"
 )
 
 const (
@@ -32,11 +33,21 @@ const (
 type HomeContentHandler struct {
 	DB     *database.DBClient
 	Config *config.Config
+	// Revalidator purges the storefront's cached copy of this content after a
+	// write. Nil when unconfigured; every call on it is then a no-op.
+	Revalidator *revalidate.Notifier
 }
 
 // NewHomeContentHandler wires a handler with the provided DB client.
 func NewHomeContentHandler(db *database.DBClient, cfg *config.Config) *HomeContentHandler {
 	return &HomeContentHandler{DB: db, Config: cfg}
+}
+
+// WithRevalidator attaches the storefront cache notifier. Separate from the
+// constructor so existing call sites keep compiling unchanged.
+func (h *HomeContentHandler) WithRevalidator(n *revalidate.Notifier) *HomeContentHandler {
+	h.Revalidator = n
+	return h
 }
 
 // GetHomeContent returns aggregated landing page content for the storefront.
@@ -1204,8 +1215,13 @@ func (h *HomeContentHandler) fetchGalleryImages(ctx context.Context) ([]models.G
 	return images, nil
 }
 
+// clearHomeCache drops both copies of the homepage CMS payload: ours in Redis,
+// and the storefront's in Next.js. Every mutation in this file already routes
+// through here, so the second purge reaches all of them without a change at
+// seventeen call sites.
 func (h *HomeContentHandler) clearHomeCache(ctx context.Context) {
 	_ = h.DB.CacheDel(ctx, homeContentCacheKey)
+	h.Revalidator.Invalidate(revalidate.TagHomeContent)
 }
 
 func validateHeroSlide(slide *models.HeroSlide) error {

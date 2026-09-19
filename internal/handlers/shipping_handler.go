@@ -350,7 +350,13 @@ func (h *ShippingHandler) RetryShipment(c *fiber.Ctx) error {
 		return authError(c, err)
 	}
 
-	shipment, err := h.Service.CreateShipmentForOrder(c.UserContext(), order, shipping.CreateOptions{
+	// Approved orders only -- the same gate the approve endpoint enforces. A
+	// retry is for an order whose booking failed, which by definition has
+	// already been approved; an unreviewed order is refused with
+	// DISPATCH_NOT_APPROVED so the admin approves it instead of booking it by
+	// the back door. Orders booked before approval existed still pass, so
+	// recovering a half-booked historical shipment is unchanged.
+	shipment, err := h.Service.CreateApprovedShipmentForOrder(c.UserContext(), order, shipping.CreateOptions{
 		AssignAWB: true,
 	})
 	if err != nil {

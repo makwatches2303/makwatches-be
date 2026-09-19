@@ -65,6 +65,10 @@ func rateChoiceFrom(q *shipping.VerifiedQuote) *models.RateChoice {
 		EstimatedDeliveryDays: q.EstimatedDeliveryDays,
 		ETD:                   q.ETD,
 		CODAvailable:          q.CODAvailable,
+		// The delivery speed the customer picked, classified from the *signed*
+		// quote rather than from anything the browser sent -- so the tier on
+		// the order is as unforgeable as the charge beside it.
+		DeliveryTier: models.DeliveryTierFor(q.EstimatedDeliveryDays),
 	}
 }
 
@@ -489,8 +493,14 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		CustomerPhone:   req.CustomerPhone,
 		CustomerEmail:   req.CustomerEmail,
 		CustomerName:    req.CustomerName,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		// Every order starts unreviewed. It is created here, appears in the
+		// admin panel, and is only handed to a carrier once an admin has
+		// approved it and named the provider. Recorded explicitly rather than
+		// left nil so the admin list can tell a new order apart from one placed
+		// before approval existed.
+		Approval:  &models.OrderApproval{Status: models.DispatchPending},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	// Insert the order into the database
@@ -524,18 +534,30 @@ func (h *OrderHandler) Checkout(c *fiber.Ctx) error {
 		log.Printf("[CHECKOUT] ⚠️ PickupDetails is NIL!")
 	}
 
-	// Book the shipment in the background so the customer is not made to wait
-	// on a carrier round trip.
+	// Dispatch waits for an admin.
 	//
-	// The goroutine gets its own context: c.UserContext() is cancelled the
-	// moment this response is written, which would abort the carrier call. The
-	// booking is idempotent at the service layer, so this racing with an admin
-	// retry cannot produce two parcels.
-	if h.Shipping != nil {
-		log.Printf("[CHECKOUT] 📦 Booking shipment for OrderID=%s", order.ID.Hex())
-		go h.bookShipment(order, verifiedQuote)
-	} else {
+	// Checkout used to hand the order straight to a carrier here. It no longer
+	// does: the order is created in MAK Watches, appears in the admin panel
+	// with the delivery option the customer chose, and a parcel is booked only
+	// once an admin has reviewed it, approved it and nominated the provider --
+	// see ApproveOrder. Nothing about the carrier integrations changed; only
+	// who triggers them, and when.
+	//
+	// SHIPPING_AUTO_DISPATCH=true restores the previous behaviour for anyone
+	// who needs it. It is off by default and deliberately bypasses the
+	// approval gate, because that is precisely what it is asking for.
+	switch {
+	case h.Shipping == nil:
 		log.Printf("[CHECKOUT] ⚠️ shipping service unavailable - no shipment booked for OrderID=%s", order.ID.Hex())
+	case h.Config != nil && h.Config.ShippingAutoDispatch:
+		// The goroutine gets its own context: c.UserContext() is cancelled the
+		// moment this response is written, which would abort the carrier call.
+		// The booking is idempotent at the service layer, so this racing with
+		// an admin retry cannot produce two parcels.
+		log.Printf("[CHECKOUT] 📦 SHIPPING_AUTO_DISPATCH is on - booking shipment for OrderID=%s", order.ID.Hex())
+		go h.bookShipment(order, verifiedQuote)
+	default:
+		log.Printf("[CHECKOUT] 🕒 OrderID=%s awaiting admin approval before dispatch", order.ID.Hex())
 	}
 
 	// Clear the user's cart
@@ -1123,6 +1145,69 @@ func (h *OrderHandler) CancelOrder(c *fiber.Ctx) error {
 // (defaults 1/20, same convention as GetProducts), status (exact match) and
 // q (free-text, matches order number, customer name, or shipping-address
 // name).
+// emptyValues matches a field that is absent, null, or the empty string.
+// Mongo's $in treats null as matching a missing field, which is what makes one
+// clause cover both an order that never had a shipment and one whose record
+// exists but is blank.
+var emptyValues = []interface{}{nil, ""}
+
+// bookedShipmentClauses is "this order has a parcel with a carrier", expressed
+// as the four identifiers ShippingInfo.HasShipment reads. Kept in one place so
+// the query and the Go predicate cannot drift.
+func bookedShipmentClauses(booked bool) []bson.M {
+	fields := []string{
+		"shipping_info.tracking_number",
+		"shipping_info.waybill",
+		"shipping_info.provider_shipment_id",
+		"shipping_info.provider_order_id",
+	}
+	op := "$in"
+	if booked {
+		op = "$nin"
+	}
+	out := make([]bson.M, 0, len(fields))
+	for _, field := range fields {
+		out = append(out, bson.M{field: bson.M{op: emptyValues}})
+	}
+	return out
+}
+
+// approvalFilterClause translates ?approval= into query clauses, or nil for no
+// filter.
+//
+// It mirrors models.Order.DispatchApproved rather than reading approval.status
+// alone. Two kinds of document would otherwise land in the wrong bucket:
+//
+//   - An order placed before approval existed has no record at all. $ne
+//     matches a missing field, so it correctly reads as pending -- unless it
+//     already has a parcel, in which case listing it as "awaiting approval"
+//     would put shipped orders in the admin's review queue.
+//   - Any order booked while SHIPPING_AUTO_DISPATCH was on is in exactly that
+//     state too.
+//
+// Returned as $and clauses so this composes with the ?q= search, which sets a
+// top-level $or of its own.
+func approvalFilterClause(raw string) []bson.M {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case models.DispatchPending:
+		// Not approved, and nothing booked.
+		return append(
+			[]bson.M{{"approval.status": bson.M{"$ne": models.DispatchApproved}}},
+			bookedShipmentClauses(false)...,
+		)
+	case models.DispatchApproved:
+		// Approved, or already carrying a parcel.
+		return []bson.M{{
+			"$or": append(
+				[]bson.M{{"approval.status": models.DispatchApproved}},
+				bookedShipmentClauses(true)...,
+			),
+		}}
+	default:
+		return nil
+	}
+}
+
 func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	ctx := c.Context()
 	// Only admin can access
@@ -1146,6 +1231,12 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 	filter := bson.M{}
 	if status := c.Query("status"); status != "" {
 		filter["status"] = status
+	}
+	// Optional dispatch-approval filter, so "what is waiting for me to review?"
+	// is one request rather than a scan of every page. Absent by default, so
+	// the existing listing is unchanged.
+	if clause := approvalFilterClause(c.Query("approval")); clause != nil {
+		filter["$and"] = clause
 	}
 	if search := c.Query("q"); search != "" {
 		pattern := regexp.QuoteMeta(search)
@@ -1194,7 +1285,14 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 			"error":   err.Error(),
 		})
 	}
-	// Map orders to frontend format if needed
+	// Map orders to frontend format if needed.
+	//
+	// The fields below the original set are additive: every one is omitempty,
+	// so a client that does not know about them is unaffected. They exist
+	// because the admin now decides whether an order is dispatched at all, and
+	// cannot make that call from an order number and a total alone -- it needs
+	// the delivery option the customer chose, what they paid, how to reach
+	// them, and whether anyone has approved it already.
 	type OrderResponse struct {
 		ID              string               `json:"id"`
 		OrderNumber     string               `json:"orderNumber"`
@@ -1209,6 +1307,24 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 		ShippingInfo    *models.ShippingInfo `json:"shippingInfo,omitempty"`
 		CreatedAt       time.Time            `json:"createdAt"`
 		UpdatedAt       time.Time            `json:"updatedAt"`
+
+		// The admin's dispatch decision, and the carrier they chose. Always
+		// present: an order with no stored record reports "pending", so the
+		// panel never has to guess what a missing field means.
+		Approval models.OrderApproval `json:"approval"`
+		// ShippingOption is the delivery choice the *customer* made at
+		// checkout -- carrier, courier, ETA and what they were charged. Kept
+		// distinct from Approval.Provider, which is the shop's own decision
+		// about who carries the parcel.
+		ShippingOption *models.RateChoice    `json:"shippingOption,omitempty"`
+		PickupDetails  *models.PickupDetails `json:"pickupDetails,omitempty"`
+
+		Subtotal       float64 `json:"subtotal,omitempty"`
+		ShippingCharge float64 `json:"shippingCharge,omitempty"`
+		DiscountAmount float64 `json:"discountAmount,omitempty"`
+		CouponCode     string  `json:"couponCode,omitempty"`
+		CustomerPhone  string  `json:"customerPhone,omitempty"`
+		CustomerEmail  string  `json:"customerEmail,omitempty"`
 	}
 	userCollection := h.DB.Collections().Users
 	// Cache userId to name to avoid duplicate DB calls
@@ -1240,6 +1356,17 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 			}
 			userNameCache[userIdStr] = customerName
 		}
+		// Normalize the approval for the wire: an order stored before approval
+		// existed has no record, and reports as pending with whatever carrier
+		// its shipment already names.
+		approval := models.OrderApproval{Status: o.ApprovalState()}
+		if o.Approval != nil {
+			approval = *o.Approval
+			if approval.Status == "" {
+				approval.Status = models.DispatchPending
+			}
+		}
+
 		respOrders = append(respOrders, OrderResponse{
 			ID:              o.ID.Hex(),
 			OrderNumber:     o.OrderNumber,
@@ -1254,6 +1381,16 @@ func (h *OrderHandler) GetAllOrders(c *fiber.Ctx) error {
 			ShippingInfo:    o.ShippingInfo,
 			CreatedAt:       o.CreatedAt,
 			UpdatedAt:       o.UpdatedAt,
+
+			Approval:       approval,
+			ShippingOption: o.ShippingOption,
+			PickupDetails:  o.PickupDetails,
+			Subtotal:       o.Subtotal,
+			ShippingCharge: o.ShippingCharge,
+			DiscountAmount: o.DiscountAmount,
+			CouponCode:     o.CouponCode,
+			CustomerPhone:  o.CustomerPhone,
+			CustomerEmail:  o.CustomerEmail,
 		})
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

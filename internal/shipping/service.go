@@ -423,6 +423,11 @@ func (s *Service) CreateShipmentForOrder(ctx context.Context, order *models.Orde
 			EstimatedDeliveryDays: opts.Quote.EstimatedDeliveryDays,
 			ETD:                   opts.Quote.ETD,
 			CODAvailable:          opts.Quote.CODAvailable,
+			// Classified the same way the order's own snapshot is, so the
+			// shipment record and the order agree on which speed the customer
+			// chose. The admin path below copies the order's choice wholesale
+			// and already carries it.
+			DeliveryTier: models.DeliveryTierFor(opts.Quote.EstimatedDeliveryDays),
 		}
 	case order.ShippingOption != nil:
 		// The admin retry path. It reuses what the customer actually chose and

@@ -13,6 +13,7 @@ func registerAdminRoutes(d *routeDeps) {
 	registerAdminSettingsRoutes(d)
 	registerAdminHomeContentRoutes(d)
 	registerAdminCategoryRoutes(d)
+	registerAdminOrderRoutes(d)
 	registerAdminShippingRoutes(d)
 	registerAdminStorefrontRoutes(d)
 	registerAdminAnalyticsRoutes(d)
@@ -137,6 +138,18 @@ func registerAdminCategoryRoutes(d *routeDeps) {
 
 	categories.Put("/:id/discount", d.category.UpdateCategoryDiscount)
 	categories.Put("/:id/subcategories/:subId/discount", d.category.UpdateSubcategoryDiscount)
+}
+
+// registerAdminOrderRoutes wires the order operations that only staff perform.
+//
+// Approval is the gate between a placed order and a booked parcel: checkout
+// creates the order and stops, and nothing reaches Shiprocket or Delhivery
+// until an admin calls this with the carrier they chose. It lives on the
+// /admin group, which already carries JWT auth plus the admin role check, and
+// the handler re-checks the role itself.
+func registerAdminOrderRoutes(d *routeDeps) {
+	orders := d.admin.Group("/orders")
+	orders.Post("/:orderID/approve", d.order.ApproveOrder)
 }
 
 func registerAdminShippingRoutes(d *routeDeps) {

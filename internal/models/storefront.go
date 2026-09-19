@@ -33,6 +33,13 @@ type StorefrontContent struct {
 	Navigation    NavigationContent    `json:"navigation" bson:"navigation"`
 	CategoryTiles CategoryTilesContent `json:"categoryTiles" bson:"category_tiles"`
 
+	// Listings is the header copy of the catalog listing pages -- the
+	// collection, men's and women's edits. These were literals in the
+	// storefront's page files, which meant the one part of those pages an
+	// admin would actually want to reword was the one part that needed a
+	// deploy to change.
+	Listings ListingPagesContent `json:"listings" bson:"listings"`
+
 	Hero     HeroContent     `json:"hero" bson:"hero"`
 	Trust    TrustContent    `json:"trust" bson:"trust"`
 	Stats    StatsContent    `json:"stats" bson:"stats"`
@@ -69,6 +76,71 @@ type HeroContent struct {
 	PricedFrom   *float64 `json:"pricedFrom,omitempty" bson:"priced_from,omitempty"`
 	PrimaryCta   CtaLink  `json:"primaryCta" bson:"primary_cta"`
 	SecondaryCta CtaLink  `json:"secondaryCta" bson:"secondary_cta"`
+}
+
+// ListingHeader is the editorial header of one catalog listing page: the
+// small eyebrow above the headline, the headline, and the sentence under it.
+//
+// Deliberately copy only. Which products a listing shows is decided by its
+// route's own scope (`/men` is the Men category tree, and nothing an admin
+// types here can widen it); this is what the page *says* above that grid.
+//
+// An empty field falls back to the shipped default rather than rendering
+// blank, so clearing a title in the admin cannot leave a headless page.
+type ListingHeader struct {
+	Eyebrow     string `json:"eyebrow" bson:"eyebrow"`
+	Title       string `json:"title" bson:"title"`
+	Description string `json:"description" bson:"description"`
+}
+
+// IsEmpty reports whether nothing has been authored for this header, which is
+// how a document written before listing copy existed is told apart from one an
+// admin has deliberately edited.
+func (h ListingHeader) IsEmpty() bool {
+	return h.Eyebrow == "" && h.Title == "" && h.Description == ""
+}
+
+// Or returns h with any empty field filled from fallback.
+//
+// Field by field rather than all-or-nothing: an admin who rewrites the
+// headline and leaves the eyebrow alone gets their headline plus the shipped
+// eyebrow, not a half-empty header.
+func (h ListingHeader) Or(fallback ListingHeader) ListingHeader {
+	if h.Eyebrow == "" {
+		h.Eyebrow = fallback.Eyebrow
+	}
+	if h.Title == "" {
+		h.Title = fallback.Title
+	}
+	if h.Description == "" {
+		h.Description = fallback.Description
+	}
+	return h
+}
+
+// ListingPagesContent is the header copy for every catalog listing page whose
+// heading is editorial rather than derived from data.
+//
+// /collections/[slug] and /category/[slug] are deliberately absent: their
+// headings are the collection's and the category's own names, which come from
+// the catalogue. Letting an admin override those here would create a second
+// place a category is named and a way for the two to disagree.
+type ListingPagesContent struct {
+	// Collection is /shop -- the whole catalogue.
+	Collection ListingHeader `json:"collection" bson:"collection"`
+	// Categories is /collections -- the "shop by category" front doors.
+	Categories ListingHeader `json:"categories" bson:"categories"`
+	Men        ListingHeader `json:"men" bson:"men"`
+	Women      ListingHeader `json:"women" bson:"women"`
+}
+
+// WithDefaults fills any header that has never been authored.
+func (c ListingPagesContent) WithDefaults(d ListingPagesContent) ListingPagesContent {
+	c.Collection = c.Collection.Or(d.Collection)
+	c.Categories = c.Categories.Or(d.Categories)
+	c.Men = c.Men.Or(d.Men)
+	c.Women = c.Women.Or(d.Women)
+	return c
 }
 
 // CtaLink is a labelled destination.
@@ -382,6 +454,29 @@ type ProductRail struct {
 // complete and invented, and the admin turns each on as real copy arrives.
 func DefaultStorefrontContent() StorefrontContent {
 	return StorefrontContent{
+		// The wording the storefront's page files used to hardcode. Kept
+		// verbatim so introducing this section changed nothing visible: the
+		// pages render exactly what they did until an admin edits them.
+		Listings: ListingPagesContent{
+			Collection: ListingHeader{
+				Eyebrow:     "The collection",
+				Title:       "Every watch we make.",
+				Description: "The complete MAK catalogue. Filter by brand, price and availability.",
+			},
+			Categories: ListingHeader{
+				Eyebrow:     "Shop by category",
+				Title:       "Shop by Category",
+				Description: "Find the right timepiece for every style, occasion and generation.",
+			},
+			Men: ListingHeader{
+				Eyebrow: "For him",
+				Title:   "The men's edit.",
+			},
+			Women: ListingHeader{
+				Eyebrow: "For her",
+				Title:   "The women's edit.",
+			},
+		},
 		// Reproduces the reference navigation exactly, so moving it out of the
 		// frontend loses no functionality. Every entry is now data the admin
 		// can relabel, reorder, disable or repoint without a deploy.
@@ -586,6 +681,11 @@ func (c StorefrontContent) WithDefaults() StorefrontContent {
 	if len(c.Rails) == 0 {
 		c.Rails = d.Rails
 	}
+
+	// Per header, not per section: a document written before listing copy
+	// existed has all three empty, and one an admin has partly edited keeps
+	// every field they filled in.
+	c.Listings = c.Listings.WithDefaults(d.Listings)
 
 	// A boutique block with no source at all predates the field. A deliberately
 	// disabled one still carries its source and copy, so the two are

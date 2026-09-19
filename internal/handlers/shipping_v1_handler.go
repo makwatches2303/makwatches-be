@@ -226,7 +226,13 @@ func (h *ShippingV1Handler) CreateShipment(c *fiber.Ctx) error {
 		AssignAWB: !body.SkipAWB,
 	}
 
-	shipment, err := h.Service.CreateShipmentForOrder(c.UserContext(), order, opts)
+	// Approved orders only. An order still awaiting review is refused here
+	// rather than booked, so this endpoint cannot be used to step around the
+	// approval gate -- and a request naming a carrier other than the approved
+	// one is refused too, which is the case the (order_id, provider) index
+	// cannot catch. An order that already carries a booked parcel passes, so
+	// re-booking a failed shipment keeps working exactly as before.
+	shipment, err := h.Service.CreateApprovedShipmentForOrder(c.UserContext(), order, opts)
 	if err != nil {
 		return adminShippingError(c, err, "create shipment for order "+order.ID.Hex())
 	}

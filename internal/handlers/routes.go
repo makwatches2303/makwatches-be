@@ -15,6 +15,7 @@ import (
 	"github.com/shivam-mishra-20/mak-watches-be/internal/mediaindex"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/middleware"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/queue"
+	"github.com/shivam-mishra-20/mak-watches-be/internal/revalidate"
 	shippingsetup "github.com/shivam-mishra-20/mak-watches-be/internal/shipping/setup"
 	"github.com/shivam-mishra-20/mak-watches-be/internal/whatsapp"
 )
@@ -114,6 +115,10 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		}
 	}()
 
+	// One storefront cache notifier for the process. Nil (and inert) unless
+	// both STOREFRONT_REVALIDATE_URL and STOREFRONT_REVALIDATE_SECRET are set.
+	revalidator := revalidate.New(cfg.StorefrontRevalidateURL, cfg.StorefrontRevalidateSecret)
+
 	d := &routeDeps{
 		app:      app,
 		db:       db,
@@ -132,7 +137,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		addressBook:   NewAddressBookHandler(db, cfg),
 		adminAcct:     &AdminAccountHandler{DB: db},
 		category:      NewCategoryHandler(db, cfg),
-		homeContent:   NewHomeContentHandler(db, cfg),
+		homeContent:   NewHomeContentHandler(db, cfg).WithRevalidator(revalidator),
 		review:        NewReviewHandler(db, cfg),
 		shipping:      NewShippingHandler(db, cfg, shippingSvc),
 		shippingV1:    NewShippingV1Handler(db, cfg, shippingSvc),
@@ -142,7 +147,7 @@ func SetupRoutes(app *fiber.App, db *database.DBClient, cfg *config.Config) {
 		productImport: NewProductImportHandler(cfg, db, fb, media, jobQueue),
 		settings:      NewSettingsHandler(db.MongoDB, fb),
 		catalogV1:     NewCatalogV1Handler(db, cfg, media),
-		storefront:    NewStorefrontHandler(db, cfg),
+		storefront:    NewStorefrontHandler(db, cfg).WithRevalidator(revalidator),
 		analytics:     NewAnalyticsHandler(db, cfg),
 		coupon:        NewCouponHandler(db, cfg),
 	}
