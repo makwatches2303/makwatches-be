@@ -460,7 +460,7 @@ func DefaultStorefrontContent() StorefrontContent {
 		Listings: ListingPagesContent{
 			Collection: ListingHeader{
 				Eyebrow:     "The collection",
-				Title:       "Every watch we make.",
+				Title:       "Timeless style . Everyday confidense.",
 				Description: "The complete MAK catalogue. Filter by brand, price and availability.",
 			},
 			Categories: ListingHeader{
@@ -628,7 +628,7 @@ func DefaultStorefrontContent() StorefrontContent {
 		Rails: []ProductRail{
 			{
 				ID: "collection", Enabled: true, Position: 1,
-				Eyebrow: "The collection", Title: "Every watch we make.",
+				Eyebrow: "The collection", Title: "Timeless style . Everyday confidense.",
 				Source: RailSourceLatest, Limit: 8, Filterable: true,
 				ViewAll: CtaLink{Label: "View the full collection", Href: "/shop"},
 			},

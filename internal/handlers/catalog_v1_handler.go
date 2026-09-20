@@ -59,23 +59,42 @@ func (h *CatalogV1Handler) ListProducts(c *fiber.Ctx) error {
 		Order:         c.Query("order"),
 		Page:          queryInt(c, "page", 1),
 		Limit:         queryInt(c, "limit", 24),
+		// Optional. Present for progressive loading; absent for the numbered
+		// pagination every existing caller uses.
+		Cursor: c.Query("cursor"),
 	}
 
 	page, err := h.Catalog.List(c.Context(), q)
+	if errors.Is(err, catalog.ErrInvalidCursor) {
+		// The shopper's fault only in the sense that they held a cursor from a
+		// listing that no longer applies -- a stale tab, an edited URL, a
+		// filter change that raced the request. 400 tells the client to start
+		// this listing again rather than retry the same cursor.
+		return badRequest(c, "Invalid or expired cursor")
+	}
 	if err != nil {
 		return internalError(c, "Failed to list products", err)
+	}
+
+	// Page and cursor requests answer with the same envelope. The totals are
+	// omitted rather than sent as zero when they were not computed: a client
+	// reading total=0 would render "0 pieces" over a full grid.
+	meta := fiber.Map{
+		"page":       page.Page,
+		"limit":      page.Limit,
+		"hasMore":    page.HasMore,
+		"nextCursor": page.NextCursor,
+	}
+	if page.TotalKnown {
+		meta["total"] = page.Total
+		meta["pages"] = page.Pages
 	}
 
 	return c.JSON(fiber.Map{
 		"success": true,
 		"message": "Products retrieved successfully",
 		"data":    page.Items,
-		"meta": fiber.Map{
-			"page":  page.Page,
-			"limit": page.Limit,
-			"total": page.Total,
-			"pages": page.Pages,
-		},
+		"meta":    meta,
 	})
 }
 
@@ -203,6 +222,13 @@ func queryBool(c *fiber.Ctx, key string) bool {
 
 func notFound(c *fiber.Ctx, message string) error {
 	return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+		"success": false,
+		"message": message,
+	})
+}
+
+func badRequest(c *fiber.Ctx, message string) error {
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 		"success": false,
 		"message": message,
 	})

@@ -46,6 +46,31 @@ func main() {
 		// (see catalog.ListVariants), uncached, once per render. Without an
 		// index that is a full collection scan on the hot path.
 		{Keys: bson.D{{Key: "variant_group_id", Value: 1}}},
+
+		// Keyset pagination sort keys.
+		//
+		// Listings sort by (field, _id) so the order is total -- see
+		// catalog/cursor.go for why the tie-break is what makes progressive
+		// loading correct. Each of these lets Mongo seek straight to a cursor
+		// position and stream from there in sort order, with no blocking sort
+		// and no skip.
+		//
+		// One index per sort the storefront offers, not one per direction:
+		// Mongo walks an index backwards when every key reverses, so
+		// {price:1,_id:1} serves price ascending and descending both.
+		//
+		// There is deliberately no {category, created_at, _id} for the Men and
+		// Women scopes. Those match `category` with a prefix regex, which is a
+		// range predicate, and a compound index cannot supply sort order after
+		// a range key -- it would force an in-memory sort of the whole scope.
+		// Walking created_at in order and filtering as it goes is both correct
+		// and streaming.
+		//
+		// These make the single-field created_at, price and name indexes above
+		// redundant prefixes. Dropping those is a separate, deliberate call.
+		{Keys: bson.D{{Key: "created_at", Value: -1}, {Key: "_id", Value: -1}}},
+		{Keys: bson.D{{Key: "price", Value: 1}, {Key: "_id", Value: 1}}},
+		{Keys: bson.D{{Key: "name", Value: 1}, {Key: "_id", Value: 1}}},
 	}
 	names, err := products.Indexes().CreateMany(ctx, productIndexes)
 	if err != nil {

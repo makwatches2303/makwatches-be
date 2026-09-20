@@ -76,15 +76,31 @@ type Query struct {
 	Order         string
 	Page          int
 	Limit         int
+
+	// Cursor requests the batch after a previous one, by keyset rather than by
+	// offset. When set, Page is ignored. See cursor.go.
+	Cursor string
 }
 
-// Page is a paginated listing result.
+// Page is a listing result.
+//
+// It serves both pagination modes. A page request carries Total and Pages; a
+// cursor request carries NextCursor and leaves the totals unset, because
+// counting the whole result set on every batch of an infinite scroll is a
+// collection scan the shopper never sees. TotalKnown says which it is, so a
+// caller cannot mistake "not counted" for "none".
 type Page struct {
 	Items []models.Product `json:"items"`
 	Page  int              `json:"page"`
 	Limit int              `json:"limit"`
 	Total int64            `json:"total"`
 	Pages int64            `json:"pages"`
+	// TotalKnown is false on cursor requests, where Total and Pages are unset.
+	TotalKnown bool `json:"totalKnown"`
+	// NextCursor is the cursor for the following batch, empty at the end.
+	NextCursor string `json:"nextCursor,omitempty"`
+	// HasMore reports whether another batch exists.
+	HasMore bool `json:"hasMore"`
 }
 
 const (
@@ -211,7 +227,7 @@ func (s *Service) filter(q Query) bson.M {
 	if term := strings.TrimSpace(q.Search); term != "" {
 		rx := bson.M{"$regex": regexEscape(term), "$options": "i"}
 		// $and-wrapped so this does not collide with the status $or above.
-		f["$and"] = []bson.M{{
+		and(f, bson.M{
 			"$or": []bson.M{
 				{"name": rx},
 				{"brand": rx},
@@ -219,60 +235,207 @@ func (s *Service) filter(q Query) bson.M {
 				{"collection": rx},
 				{"short_description": rx},
 			},
-		}}
+		})
 	}
 
 	return f
 }
 
-// List returns a page of products matching the query.
+// and appends a condition to a filter's $and, creating it if absent.
+//
+// Both the status test and the free-text search are already $or clauses, and a
+// keyset seek is a third. A bson.M holds one "$or" key, so the only way to
+// carry several is to move them under $and -- assigning a second "$or" would
+// silently drop the first.
+func and(f bson.M, cond bson.M) {
+	existing, _ := f["$and"].([]bson.M)
+	f["$and"] = append(existing, cond)
+}
+
+// sortFieldFor maps the API's sort key to its bson field. The query is
+// normalized before this is called, so the default is unreachable in practice
+// and exists only so the function is total.
+func sortFieldFor(sortBy string) string {
+	switch sortBy {
+	case "price":
+		return "price"
+	case "name":
+		return "name"
+	default:
+		return "created_at"
+	}
+}
+
+// sortValueOf reads a product's value for the given sort field. This is what
+// goes into the next cursor, so it must be the same value the sort ordered by.
+func sortValueOf(p *models.Product, sortBy string) any {
+	switch sortBy {
+	case "price":
+		return p.Price
+	case "name":
+		return p.Name
+	default:
+		return p.CreatedAt
+	}
+}
+
+// listingProjection drops the fields a listing never draws.
+//
+// Only `seo` qualifies. It is per-product metadata used solely by the product
+// page's <head>, so a grid of 24 carries 24 copies of text nothing renders.
+// Everything else the catalogue holds is genuinely on screen: the card shows
+// the movement from `specs`, and Quick view shows `description`. Projecting
+// those away would save more bytes and break both.
+func listingProjection() bson.M {
+	return bson.M{"seo": 0}
+}
+
+// List returns a batch of products matching the query.
+//
+// Two modes, one query builder. Without a cursor this is the original
+// page/skip listing, unchanged for every caller that still uses it. With a
+// cursor it is a keyset seek: the batch after a named document, at a cost that
+// does not grow with how far the shopper has scrolled. See cursor.go.
 func (s *Service) List(ctx context.Context, q Query) (*Page, error) {
 	q.normalize()
 
 	coll := s.db.Collections().Products
 	f := s.filter(q)
 
-	total, err := coll.CountDocuments(ctx, f)
-	if err != nil {
-		return nil, fmt.Errorf("catalog: count products: %w", err)
-	}
-
+	descending := !strings.EqualFold(q.Order, "asc")
 	dir := -1
-	if q.Order == "asc" {
+	if !descending {
 		dir = 1
 	}
-	sortField := map[string]string{
-		"price":     "price",
-		"name":      "name",
-		"createdAt": "created_at",
-	}[q.SortBy]
+	sortField := sortFieldFor(q.SortBy)
+
+	// A cursor is validated against the query it arrived with, so one issued
+	// for a different scope, filter or sort is refused rather than quietly
+	// windowing the wrong catalogue.
+	var cursor *Cursor
+	if q.Cursor != "" {
+		decoded, err := decodeCursor(q.Cursor, q)
+		if err != nil {
+			return nil, err
+		}
+		cursor = decoded
+		and(f, keysetFilter(sortField, descending, *cursor))
+	}
+
+	// Counting is a full scan of the matching set. A page request needs it to
+	// draw page numbers; a cursor request does not, and paying for it on every
+	// batch of an infinite scroll would be the most expensive part of it.
+	var total int64
+	totalKnown := cursor == nil
+	if totalKnown {
+		var err error
+		// The count must not see the keyset predicate, which is why it reads
+		// the filter before one is appended -- but there is none in this
+		// branch by construction.
+		total, err = coll.CountDocuments(ctx, f)
+		if err != nil {
+			return nil, fmt.Errorf("catalog: count products: %w", err)
+		}
+	}
+
+	// The _id tie-break makes the order total. Without it, documents sharing a
+	// created_at come back in whatever order the storage engine likes, and two
+	// requests may disagree -- which is how a product shows up twice, or never,
+	// across a boundary. It matters for skip paging too, so it is applied to
+	// both modes rather than only to the cursor path.
+	sort := bson.D{{Key: sortField, Value: dir}, {Key: "_id", Value: dir}}
+
+	// One extra document answers "is there another batch?" without a second
+	// query. It is dropped before the batch is returned.
+	fetch := int64(q.Limit) + 1
 
 	opts := options.Find().
-		SetSkip(int64((q.Page - 1) * q.Limit)).
-		SetLimit(int64(q.Limit)).
-		SetSort(bson.D{{Key: sortField, Value: dir}})
+		SetLimit(fetch).
+		SetSort(sort).
+		SetProjection(listingProjection())
 
-	cursor, err := coll.Find(ctx, f, opts)
+	// Skip belongs to page mode only. A cursor has already seeked.
+	if cursor == nil {
+		opts.SetSkip(int64((q.Page - 1) * q.Limit))
+	}
+
+	dbCursor, err := coll.Find(ctx, f, opts)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: find products: %w", err)
 	}
-	defer cursor.Close(ctx)
+	defer dbCursor.Close(ctx)
 
-	items := []models.Product{}
-	if err := cursor.All(ctx, &items); err != nil {
+	fetched := []models.Product{}
+	if err := dbCursor.All(ctx, &fetched); err != nil {
 		return nil, fmt.Errorf("catalog: decode products: %w", err)
 	}
 
-	for i := range items {
-		s.resolveMedia(ctx, &items[i])
+	page, err := assemble(q, fetched, total, totalKnown)
+	if err != nil {
+		return nil, err
 	}
 
-	pages := int64(0)
-	if q.Limit > 0 {
-		pages = (total + int64(q.Limit) - 1) / int64(q.Limit)
+	for i := range page.Items {
+		s.resolveMedia(ctx, &page.Items[i])
 	}
 
-	return &Page{Items: items, Page: q.Page, Limit: q.Limit, Total: total, Pages: pages}, nil
+	return page, nil
+}
+
+// assemble turns the raw find output into a listing result.
+//
+// Split from List, and free of both Mongo and media resolution, because this
+// is the part with the arithmetic: where the over-fetched document is dropped,
+// what "is there more" means in each mode, and which document the next cursor
+// names. A listing that stops one batch early is a bug with no stack trace,
+// so it is worth being able to test the boundary directly.
+//
+// fetched is the batch plus at most one extra document; see List.
+func assemble(q Query, fetched []models.Product, total int64, totalKnown bool) (*Page, error) {
+	// The extra document is the whole "is there another batch" signal in
+	// cursor mode: if the query could produce one more than was asked for,
+	// there is more to come.
+	overfetched := len(fetched) > q.Limit
+	items := fetched
+	if overfetched {
+		items = fetched[:q.Limit]
+	}
+
+	page := &Page{
+		Items:      items,
+		Page:       q.Page,
+		Limit:      q.Limit,
+		TotalKnown: totalKnown,
+		HasMore:    overfetched,
+	}
+
+	if totalKnown {
+		page.Total = total
+		if q.Limit > 0 {
+			page.Pages = (total + int64(q.Limit) - 1) / int64(q.Limit)
+		}
+		// In page mode the count is the stronger signal: it knows about pages
+		// beyond this one, which the single extra document does not.
+		page.HasMore = int64(q.Page)*int64(q.Limit) < total
+	}
+
+	// The cursor names the last document actually returned, so the next batch
+	// resumes exactly where this one stopped.
+	//
+	// Minted from the over-fetch rather than from HasMore, because those can
+	// disagree: page 3 of a 37-page listing has more to come by the count, and
+	// its cursor is only meaningful if this batch really did have a document
+	// after it.
+	if overfetched && len(items) > 0 {
+		last := items[len(items)-1]
+		next, err := encodeCursor(q, sortValueOf(&last, q.SortBy), last.ID)
+		if err != nil {
+			return nil, err
+		}
+		page.NextCursor = next
+	}
+
+	return page, nil
 }
 
 // GetByID returns one product by its ObjectID hex string.

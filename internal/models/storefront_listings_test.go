@@ -19,7 +19,7 @@ func TestDefaultListingHeadersMatchTheShippedCopy(t *testing.T) {
 		wantDescription string
 	}{
 		"collection": {
-			d.Collection, "The collection", "Every watch we make.",
+			d.Collection, "The collection", "Timeless style . Everyday confidense.",
 			"The complete MAK catalogue. Filter by brand, price and availability.",
 		},
 		"men":   {d.Men, "For him", "The men's edit.", ""},
