@@ -494,9 +494,8 @@ func DefaultStorefrontContent() StorefrontContent {
 			},
 			Support: []NavItem{
 				{ID: "shipping", Label: "Shipping", Href: "/shipping", Enabled: true, Order: 1},
-				{ID: "returns", Label: "Returns", Href: "/refund", Enabled: true, Order: 2},
-				{ID: "contact", Label: "Contact", Href: "/contact", Enabled: true, Order: 3},
-				{ID: "track", Label: "Track order", Href: "/orders", Enabled: true, Order: 4},
+				{ID: "contact", Label: "Contact", Href: "/contact", Enabled: true, Order: 2},
+				{ID: "track", Label: "Track order", Href: "/orders", Enabled: true, Order: 3},
 			},
 			Footer: []FooterColumn{
 				{ID: "shop", Heading: "Shop", Enabled: true, Order: 1, Items: []NavItem{
@@ -512,13 +511,12 @@ func DefaultStorefrontContent() StorefrontContent {
 				}},
 				{ID: "care", Heading: "Care", Enabled: true, Order: 3, Items: []NavItem{
 					{ID: "shipping", Label: "Shipping", Href: "/shipping", Enabled: true, Order: 1},
-					{ID: "returns", Label: "Returns", Href: "/refund", Enabled: true, Order: 2},
-					{ID: "track", Label: "Track order", Href: "/orders", Enabled: true, Order: 3},
+					{ID: "track", Label: "Track order", Href: "/orders", Enabled: true, Order: 2},
 				}},
 				{ID: "legal", Heading: "Legal", Enabled: true, Order: 4, Items: []NavItem{
 					{ID: "privacy", Label: "Privacy", Href: "/privacy", Enabled: true, Order: 1},
 					{ID: "terms", Label: "Terms", Href: "/terms", Enabled: true, Order: 2},
-					{ID: "refunds", Label: "Refunds", Href: "/refund", Enabled: true, Order: 3},
+					{ID: "replacement", Label: "Replacement", Href: "/replacement", Enabled: true, Order: 3},
 				}},
 			},
 		},
