@@ -16,6 +16,8 @@ import (
 // does not survive across server instances (or Lambda cold starts). The
 // caller (AuthHandler in internal/handlers/auth_handler.go) stores state in
 // Redis instead, alongside its other shared state.
+
+
 type GoogleOAuth struct {
 	config *oauth2.Config
 }
