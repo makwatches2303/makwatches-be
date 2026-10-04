@@ -33,6 +33,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"go.mongodb.org/mongo-driver/bson"
 	"google.golang.org/api/iterator"
 
@@ -184,7 +185,13 @@ var orphanRendition = regexp.MustCompile(`^\d{16,20}-\d{16,20}-.*-(?:400|800|120
 // this tool can be caught by a pattern that happens to match.
 func cleanOrphanRenditions(ctx context.Context, client *firebase.FirebaseClient, bucket string, dryRun bool) {
 	cutoff := time.Now().Add(-24 * time.Hour)
-	it := client.StorageClient.Bucket(bucket).Objects(ctx, nil)
+	// Names and creation times only: the default listing returns every
+	// object's full metadata and ACLs, ~50x the bytes, all of it billed egress.
+	query := &storage.Query{}
+	if err := query.SetAttrSelection([]string{"Name", "Created"}); err != nil {
+		log.Fatalf("selecting listing fields: %v", err)
+	}
+	it := client.StorageClient.Bucket(bucket).Objects(ctx, query)
 
 	var found, deleted int
 	for {

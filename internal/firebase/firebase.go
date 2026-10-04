@@ -105,6 +105,12 @@ func (f *FirebaseClient) upload(ctx context.Context, file io.Reader, objectName,
 	// trip per object -- and an import that stores a gallery and its
 	// thumbnails makes dozens of them, where the latency is the whole cost.
 	wc.PredefinedACL = "publicRead"
+	// Every object name carries a unique timestamp (or is a rendition derived
+	// from one), so a stored image never changes under its URL. Without this
+	// header Google serves "max-age=3600", and every returning visitor
+	// re-downloads every image each hour -- at ASIA egress rates, the single
+	// biggest recurring cost of serving them.
+	wc.CacheControl = "public, max-age=31536000, immutable"
 	log.Printf("[FIREBASE] Set content type: %s", wc.ContentType)
 
 	log.Println("[FIREBASE] Copying file data...")
