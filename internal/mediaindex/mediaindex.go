@@ -35,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
 
 	"github.com/shivam-mishra-20/mak-watches-be/internal/firebase"
@@ -42,9 +43,9 @@ import (
 
 // DefaultTTL is how long an inventory is trusted before being rebuilt.
 //
-// Long enough that listing cost is negligible, short enough that an image
-// uploaded through the admin panel becomes visible without a restart.
-const DefaultTTL = 10 * time.Minute
+// Long enough that listing cost is negligible. Freshness does not depend on
+// it: Note covers this process's own uploads and probe covers the rest.
+const DefaultTTL = 30 * time.Minute
 
 // Index is a cached view of the object names present in the bucket.
 //
@@ -187,8 +188,18 @@ func (i *Index) rebuild(ctx context.Context) {
 		return
 	}
 
+	// Names only. The default listing returns every object's full metadata,
+	// ACL entries included -- about 4.5 KB per object, so one rebuild of this
+	// bucket moved ~50 MB out of it. Repeated every TTL by every Lambda
+	// container, that was 180 GB of billable egress in a month. A name-only
+	// listing is ~100 bytes per object.
+	query := &storage.Query{}
+	if err := query.SetAttrSelection([]string{"Name"}); err != nil {
+		i.markUnavailable("selecting listing fields: " + err.Error())
+		return
+	}
 	names := make(map[string]struct{}, 512)
-	it := client.StorageClient.Bucket(client.BucketName).Objects(listCtx, nil)
+	it := client.StorageClient.Bucket(client.BucketName).Objects(listCtx, query)
 	for {
 		attrs, err := it.Next()
 		if err == iterator.Done {
