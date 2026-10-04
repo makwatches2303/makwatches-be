@@ -65,8 +65,12 @@ func extractAmazon(doc *html.Node, base *url.URL) *Draft {
 	draft.VariantDimension, draft.Variants, _ = amazonVariants(doc, base)
 	draft.Images = amazonImages(doc, base, draft.Variants)
 
-	if match := asinFromPath.FindStringSubmatch(base.Path); len(match) == 2 {
-		draft.SKU = match[1]
+	// A paste with no link has no path to read the ASIN from; the page's own
+	// markup is the only source then, and the checks below still apply.
+	if base != nil {
+		if match := asinFromPath.FindStringSubmatch(base.Path); len(match) == 2 {
+			draft.SKU = match[1]
+		}
 	}
 
 	// The "Product Description" block, when the seller wrote one. Bullets are

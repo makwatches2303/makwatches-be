@@ -1,6 +1,7 @@
 package scrape
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"testing"
@@ -405,5 +406,38 @@ func TestAmazonVariantsIgnoresASingleOption(t *testing.T) {
 	_, variants, _ := amazonVariants(doc, mustParse(t, "https://www.amazon.in/dp/B000000001"))
 	if len(variants) != 0 {
 		t.Errorf("a listing with one option produced %d variants; a picker of one is noise", len(variants))
+	}
+}
+
+// A paste with no link is a supported path -- the admin panel offers it from
+// the start -- so no extractor may assume a base URL exists. Amazon's reader
+// once read base.Path unguarded and panicked with a nil pointer dereference.
+func TestExtractAllWorksWithoutABaseURL(t *testing.T) {
+	for name, page := range map[string]string{
+		"amazon":  amazonPage,
+		"variant": amazonVariantPage,
+		"jsonld":  jsonLDPage,
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("extractAll panicked without a base URL: %v", r)
+				}
+			}()
+			if _, err := extractAll([]byte(page), nil, ""); err != nil {
+				t.Fatalf("extractAll: %v", err)
+			}
+		})
+	}
+}
+
+func TestScrapeHTMLWithoutALink(t *testing.T) {
+	svc := NewService("")
+	draft, err := svc.ScrapeHTML(context.Background(), "", amazonPage)
+	if err != nil {
+		t.Fatalf("ScrapeHTML without a URL: %v", err)
+	}
+	if draft == nil || draft.Name == "" {
+		t.Fatalf("expected a named draft, got %+v", draft)
 	}
 }
